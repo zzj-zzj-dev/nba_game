@@ -161,34 +161,30 @@
       
       try {
         if (isLogin) {
-          // 尝试用邮箱登录，如果包含@则用email，否则用username
-          if (username.includes('@')) {
-            await pb.collection('users').authWithPassword(username, password);
-          } else {
-            await pb.collection('users').authWithPassword(username, password);
-          }
+          await pb.collection('users').authWithPassword(username, password);
         } else {
           // 注册 — 创建用户
           const data = { 
             username: username,
-            email: username.includes('@') ? username : `${username}@nba-game.local`,
+            email: username.includes('@') ? username : `${username}@nba.local`,
             emailVisibility: false,
             password: password,
             passwordConfirm: password
           };
-          await pb.collection('users').create(data);
+          const record = await pb.collection('users').create(data);
           // 注册后自动登录
-          if (username.includes('@')) {
-            await pb.collection('users').authWithPassword(username, password);
-          } else {
-            await pb.collection('users').authWithPassword(username, password);
-          }
+          await pb.collection('users').authWithPassword(username, password);
         }
         
         window.location.href = 'index.html';
       } catch (err) {
         console.error(err);
-        const msg = err.data?.message || err.message || '操作失败';
+        let msg = err.message || '操作失败';
+        if (err.data?.message) msg = err.data.message;
+        if (err.data?.data) {
+          const fields = Object.values(err.data.data);
+          if (fields.length > 0) msg = fields.map(f => f.message || f.code).join('; ');
+        }
         errorEl.textContent = msg;
       } finally {
         loadingEl.style.display = 'none';
