@@ -1,7 +1,19 @@
-// PocketBase 启动时自动创建 saves 集合
+// PocketBase 启动时自动配置
+
 onServerAfterStart(() => {
   try {
     const collections = $app.dao().findCollectionsByType('base');
+    
+    // 1. 确保 users 集合的创建规则允许注册
+    const usersCol = $app.dao().findCollectionByNameOrId('users');
+    if (usersCol) {
+      // 允许匿名用户注册
+      usersCol.createRule = '';
+      $app.dao().saveRecord(usersCol);
+      console.log('✅ Users collection: create rule enabled');
+    }
+    
+    // 2. 创建 saves 集合
     const hasSaves = collections.some(c => c.name === 'saves');
     
     if (!hasSaves) {
@@ -16,7 +28,7 @@ onServerAfterStart(() => {
           type: 'relation',
           required: true,
           maxSelect: 1,
-          collectionId: '_pb_users_'
+          collectionId: '_pb_users_auth_'
         },
         {
           name: 'gameData',
@@ -36,9 +48,9 @@ onServerAfterStart(() => {
       collection.set('deleteRule', '@request.auth.id = user');
       
       $app.dao().saveRecord(collection);
-      console.log('✅ Saves collection created automatically');
+      console.log('✅ Saves collection created');
     }
   } catch (e) {
-    console.error('Error creating saves collection:', e.message);
+    console.error('Error:', e.message);
   }
 });
