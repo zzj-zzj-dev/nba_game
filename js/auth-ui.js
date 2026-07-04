@@ -1,38 +1,48 @@
 /**
- * auth-ui.js — PocketBase 登录 + 存档 + 联机
- * 使用 PocketBase SDK 直接连接服务端
+ * auth-ui.js — PocketBase 登录 + 存档（直接fetch API）
  */
 
-import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase@0.22.0/dist/pocketbase.es.mjs';
+const API = window.location.origin + '/api';
 
-const PB_URL = window.location.origin; // PocketBase 和前端同域名
-const pb = new PocketBase(PB_URL);
+// 获取当前登录信息
+function getAuth() {
+  const saved = localStorage.getItem('pb_auth');
+  if (!saved) return null;
+  try {
+    return JSON.parse(saved);
+  } catch(e) {
+    localStorage.removeItem('pb_auth');
+    return null;
+  }
+}
 
-let currentUser = null;
+function getToken() {
+  const auth = getAuth();
+  return auth?.token || null;
+}
+
+function getUserId() {
+  const auth = getAuth();
+  return auth?.record?.id || null;
+}
+
+function getUsername() {
+  const auth = getAuth();
+  return auth?.record?.username || auth?.record?.email?.split('@')[0] || '用户';
+}
+
+let currentUser = getAuth();
 
 // ===================== 初始化 =====================
 function initAuthUI() {
-  // 检查是否已有登录状态
-  if (pb.authStore.isValid) {
-    currentUser = pb.authStore.model;
-    showUserInfo(currentUser);
+  if (currentUser) {
+    showUserInfo();
   } else {
     showLoginPrompt();
   }
-
-  // 监听登录状态变化
-  pb.authStore.onChange((token, model) => {
-    if (model) {
-      currentUser = model;
-      showUserInfo(model);
-    } else {
-      currentUser = null;
-      showLoginPrompt();
-    }
-  });
 }
 
-function showUserInfo(user) {
+function showUserInfo() {
   const header = document.querySelector('#game-header');
   if (!header) return;
   
@@ -48,10 +58,8 @@ function showUserInfo(user) {
     font-size: 0.8em;
   `;
   
-  const name = user.username || user.email?.split('@')[0] || '用户';
-  
   bar.innerHTML = `
-    <span>👤 ${name}</span>
+    <span>👤 ${getUsername()}</span>
     <span>
       <button class="btn" style="background:#2a5a6a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-save-game">💾 存档</button>
       <button class="btn" style="background:#5a3a7a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-load-game">📂 读档</button>
@@ -124,19 +132,35 @@ async function saveGame() {
   };
   
   try {
-    // 查找是否已有存档
-    const records = await pb.collection('saves').getFullList({
-      filter: `user = "${currentUser.id}"`
-    });
+    const token = getToken();
+    const userId = getUserId();
+    if (!token || !userId) throw new Error('未登录');
     
-    if (records.length > 0) {
-      await pb.collection('saves').update(records[0].id, {
-        gameData: gameData
+    // 查找是否已有存档
+    const searchRes = await fetch(API + '/collections/saves/records?filter=user%3D%22' + userId + '%22', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const searchData = await searchRes.json();
+    
+    if (searchData.items && searchData.items.length > 0) {
+      // 更新存档
+      await fetch(API + '/collections/saves/records/' + searchData.items[0].id, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ gameData: gameData })
       });
     } else {
-      await pb.collection('saves').create({
-        user: currentUser.id,
-        gameData: gameData
+      // 创建新存档
+      await fetch(API + '/collections/saves/records', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        },
+        body: JSON.stringify({ user: userId, gameData: gameData })
       });
     }
     
@@ -144,7 +168,6 @@ async function saveGame() {
     addLog('💾 游戏已保存到云端');
   } catch (e) {
     updateStatusBar('⚠️ 存档失败: ' + e.message);
-    console.error(e);
   }
 }
 
@@ -152,16 +175,21 @@ async function loadGame() {
   if (!currentUser || !battleManager) return;
   
   try {
-    const records = await pb.collection('saves').getFullList({
-      filter: `user = "${currentUser.id}"`
-    });
+    const token = getToken();
+    const userId = getUserId();
+    if (!token || !userId) throw new Error('未登录');
     
-    if (records.length === 0) {
+    const searchRes = await fetch(API + '/collections/saves/records?filter=user%3D%22' + userId + '%22', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const searchData = await searchRes.json();
+    
+    if (!searchData.items || searchData.items.length === 0) {
       updateStatusBar('⚠️ 没有找到存档');
       return;
     }
     
-    const gd = records[0].gameData;
+    const gd = searchData.items[0].gameData;
     
     battleManager.homePlayers.forEach((p, i) => {
       if (gd.homePlayers[i]) Object.assign(p, gd.homePlayers[i]);
@@ -195,12 +223,12 @@ async function loadGame() {
     addLog('📂 已读取云端存档');
   } catch (e) {
     updateStatusBar('⚠️ 读档失败: ' + e.message);
-    console.error(e);
   }
 }
 
 function logout() {
-  pb.authStore.clear();
+  localStorage.removeItem('pb_auth');
+  currentUser = null;
   window.location.href = 'login.html';
 }
 
@@ -209,4 +237,4 @@ window.initAuthUI = initAuthUI;
 window.saveGame = saveGame;
 window.loadGame = loadGame;
 
-console.log('✅ auth-ui.js (PocketBase) loaded');
+console.log('✅ auth-ui.js (direct fetch) loaded');
