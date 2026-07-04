@@ -379,16 +379,15 @@ window.loadGame = loadGame;
 window.showOnlineMenu = showOnlineMenu;
 window.syncGameAction = syncGameAction;
 
-// 直接绑定联机按钮事件（绕过 main.js）
-document.addEventListener('DOMContentLoaded', () => {
+// 延迟绑定联机按钮（等 main.js 初始化完成后）
+setTimeout(() => {
   const btnOnline = document.getElementById('btn-online');
   if (btnOnline) {
-    btnOnline.addEventListener('click', () => {
-      if (typeof showOnlineMenu === 'function') {
-        showOnlineMenu();
-      }
-    });
+    // 移除 main.js 绑定的旧事件
+    const newBtn = btnOnline.cloneNode(true);
+    btnOnline.parentNode.replaceChild(newBtn, btnOnline);
+    newBtn.addEventListener('click', showOnlineMenu);
   }
-});
+}, 500);
 
 console.log('✅ auth-ui.js (兼容版) loaded');
