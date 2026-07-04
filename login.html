@@ -22,88 +22,38 @@
       text-align: center;
       box-shadow: 0 0 40px rgba(0,0,0,0.5);
     }
-    #login-container h1 {
-      color: #ffd700;
-      font-size: 1.6em;
-      margin-bottom: 8px;
-    }
-    #login-container p.subtitle {
-      color: #888;
-      font-size: 0.85em;
-      margin-bottom: 24px;
-    }
-    .input-group {
-      margin-bottom: 14px;
-      text-align: left;
-    }
-    .input-group label {
-      display: block;
-      color: #aaa;
-      font-size: 0.8em;
-      margin-bottom: 4px;
-    }
+    #login-container h1 { color: #ffd700; font-size: 1.6em; margin-bottom: 8px; }
+    #login-container p.subtitle { color: #888; font-size: 0.85em; margin-bottom: 24px; }
+    .input-group { margin-bottom: 14px; text-align: left; }
+    .input-group label { display: block; color: #aaa; font-size: 0.8em; margin-bottom: 4px; }
     .input-group input {
-      width: 100%;
-      padding: 10px 12px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid #4a4a7a;
-      border-radius: 8px;
-      color: #fff;
-      font-size: 1em;
-      outline: none;
+      width: 100%; padding: 10px 12px;
+      background: rgba(255,255,255,0.06); border: 1px solid #4a4a7a;
+      border-radius: 8px; color: #fff; font-size: 1em; outline: none;
       transition: border-color 0.2s;
     }
-    .input-group input:focus {
-      border-color: #ffd700;
-    }
+    .input-group input:focus { border-color: #ffd700; }
     .btn-login {
-      width: 100%;
-      padding: 12px;
-      background: #2a5a7a;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 1em;
-      cursor: pointer;
-      margin-top: 8px;
-      transition: background 0.2s;
+      width: 100%; padding: 12px; background: #2a5a7a; color: #fff;
+      border: none; border-radius: 8px; font-size: 1em; cursor: pointer;
+      margin-top: 8px; transition: background 0.2s;
     }
-    .btn-login:hover {
-      background: #3a7aaa;
-    }
-    .btn-toggle {
-      background: transparent;
-      color: #888;
-      border: none;
-      cursor: pointer;
-      margin-top: 12px;
-      font-size: 0.85em;
-    }
-    .btn-toggle:hover {
-      color: #ccc;
-    }
-    #login-error {
-      color: #ff6b6b;
-      font-size: 0.85em;
-      min-height: 20px;
-      margin-top: 8px;
-    }
-    #login-loading {
-      display: none;
-      color: #ffd700;
-      margin-top: 8px;
-    }
+    .btn-login:hover { background: #3a7aaa; }
+    .btn-toggle { background: transparent; color: #888; border: none; cursor: pointer; margin-top: 12px; font-size: 0.85em; }
+    .btn-toggle:hover { color: #ccc; }
+    #login-error { color: #ff6b6b; font-size: 0.85em; min-height: 20px; margin-top: 8px; }
+    #login-loading { display: none; color: #ffd700; margin-top: 8px; }
   </style>
 </head>
 <body>
   <div id="login-container">
     <h1>🏀 NBA卡牌对战</h1>
-    <p class="subtitle">登录以保存数据并在线对战</p>
+    <p class="subtitle">登录以保存数据</p>
     
     <form id="login-form" onsubmit="return false;">
       <div class="input-group">
-        <label>用户名</label>
-        <input type="text" id="login-username" placeholder="输入用户名" required minlength="2">
+        <label>邮箱</label>
+        <input type="email" id="login-email" placeholder="输入邮箱" required>
       </div>
       <div class="input-group">
         <label>密码（至少6位）</label>
@@ -123,13 +73,26 @@
     </div>
   </div>
 
-  <script>
-    // 直接使用 fetch 调用 PocketBase API，不依赖 SDK
-    const API = window.location.origin + '/api';
-    let isLogin = true;
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyC7YvTSDGpid7nPFaICOjWHGWKFRZTXYew",
+      authDomain: "nba-card-game.firebaseapp.com",
+      projectId: "nba-card-game",
+      storageBucket: "nba-card-game.firebasestorage.app",
+      messagingSenderId: "614710872766",
+      appId: "1:614710872766:web:a86d11643c5679f8c0ecef",
+      measurementId: "G-32PFCZSVVP"
+    };
     
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+
+    let isLogin = true;
     const form = document.getElementById('login-form');
-    const usernameInput = document.getElementById('login-username');
+    const emailInput = document.getElementById('login-email');
     const passwordInput = document.getElementById('login-password');
     const errorEl = document.getElementById('login-error');
     const loadingEl = document.getElementById('login-loading');
@@ -137,16 +100,12 @@
     const toggleBtn = document.getElementById('login-toggle');
     const skipBtn = document.getElementById('btn-skip-login');
 
-    // 检查是否已登录
-    const saved = localStorage.getItem('pb_auth');
-    if (saved) {
-      try {
-        const auth = JSON.parse(saved);
-        if (auth.token) {
-          window.location.href = 'index.html';
-        }
-      } catch(e) {}
-    }
+    // 已登录直接跳转
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        window.location.href = 'index.html';
+      }
+    });
 
     toggleBtn.addEventListener('click', () => {
       isLogin = !isLogin;
@@ -157,15 +116,11 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const username = usernameInput.value.trim();
+      const email = emailInput.value.trim();
       const password = passwordInput.value;
       
-      if (!username || !password) {
-        errorEl.textContent = '请填写用户名和密码';
-        return;
-      }
-      if (!isLogin && password.length < 6) {
-        errorEl.textContent = '密码至少6位';
+      if (!email || !password) {
+        errorEl.textContent = '请填写邮箱和密码';
         return;
       }
       
@@ -175,65 +130,28 @@
       
       try {
         if (isLogin) {
-          // 登录
-          const res = await fetch(API + '/collections/users/auth-with-password', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ identity: username, password: password })
-          });
-          const data = await res.json();
-          
-          if (data.token) {
-            localStorage.setItem('pb_auth', JSON.stringify(data));
-            window.location.href = 'index.html';
-          } else {
-            errorEl.textContent = data.message || '用户名或密码错误';
-          }
+          await signInWithEmailAndPassword(auth, email, password);
         } else {
-          // 注册
-          const res = await fetch(API + '/collections/users/records', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              username: username,
-              email: username + '@nba.local',
-              emailVisibility: false,
-              password: password,
-              passwordConfirm: password
-            })
-          });
-          const data = await res.json();
-          
-          if (data.id) {
-            // 注册成功，自动登录
-            const loginRes = await fetch(API + '/collections/users/auth-with-password', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ identity: username, password: password })
-            });
-            const loginData = await loginRes.json();
-            
-            if (loginData.token) {
-              localStorage.setItem('pb_auth', JSON.stringify(loginData));
-              window.location.href = 'index.html';
-            } else {
-              errorEl.textContent = loginData.message || '注册成功但登录失败';
-            }
-          } else {
-            errorEl.textContent = data.message || '注册失败';
-          }
+          await createUserWithEmailAndPassword(auth, email, password);
         }
+        window.location.href = 'index.html';
       } catch (err) {
-        errorEl.textContent = '网络错误: ' + err.message;
+        const map = {
+          'auth/email-already-in-use': '该邮箱已注册',
+          'auth/user-not-found': '用户不存在',
+          'auth/wrong-password': '密码错误',
+          'auth/invalid-credential': '邮箱或密码错误',
+          'auth/weak-password': '密码太弱，至少6位',
+          'auth/invalid-email': '邮箱格式无效'
+        };
+        errorEl.textContent = map[err.code] || err.message;
       } finally {
         loadingEl.style.display = 'none';
         submitBtn.disabled = false;
       }
     });
 
-    // 跳过登录
     skipBtn.addEventListener('click', () => {
-      localStorage.removeItem('pb_auth');
       window.location.href = 'index.html';
     });
   </script>

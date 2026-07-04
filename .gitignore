@@ -1,6 +1,3 @@
-node_modules/
-pb_data/
 .DS_Store
-*.db
-*.db-shm
-*.db-wal
+pb_data/
+node_modules/
