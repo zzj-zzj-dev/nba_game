@@ -4,7 +4,6 @@
 
 const API = window.location.origin + '/api';
 
-// 获取当前登录信息
 function getAuth() {
   const saved = localStorage.getItem('pb_auth');
   if (!saved) return null;
@@ -33,7 +32,6 @@ function getUsername() {
 
 let currentUser = getAuth();
 
-// ===================== 初始化 =====================
 function initAuthUI() {
   if (currentUser) {
     showUserInfo();
@@ -98,7 +96,6 @@ function showLoginPrompt() {
   header.insertBefore(bar, header.firstChild);
 }
 
-// ===================== 存档/读档 =====================
 async function saveGame() {
   if (!currentUser || !battleManager) return;
   
@@ -136,30 +133,21 @@ async function saveGame() {
     const userId = getUserId();
     if (!token || !userId) throw new Error('未登录');
     
-    // 查找是否已有存档
     const searchRes = await fetch(API + '/collections/saves/records?filter=user%3D%22' + userId + '%22', {
       headers: { 'Authorization': 'Bearer ' + token }
     });
     const searchData = await searchRes.json();
     
     if (searchData.items && searchData.items.length > 0) {
-      // 更新存档
       await fetch(API + '/collections/saves/records/' + searchData.items[0].id, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({ gameData: gameData })
       });
     } else {
-      // 创建新存档
       await fetch(API + '/collections/saves/records', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + token
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
         body: JSON.stringify({ user: userId, gameData: gameData })
       });
     }
@@ -232,7 +220,6 @@ function logout() {
   window.location.href = 'login.html';
 }
 
-// ===================== 挂载到全局 =====================
 window.initAuthUI = initAuthUI;
 window.saveGame = saveGame;
 window.loadGame = loadGame;
