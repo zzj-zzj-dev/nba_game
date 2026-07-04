@@ -379,4 +379,16 @@ window.loadGame = loadGame;
 window.showOnlineMenu = showOnlineMenu;
 window.syncGameAction = syncGameAction;
 
+// 直接绑定联机按钮事件（绕过 main.js）
+document.addEventListener('DOMContentLoaded', () => {
+  const btnOnline = document.getElementById('btn-online');
+  if (btnOnline) {
+    btnOnline.addEventListener('click', () => {
+      if (typeof showOnlineMenu === 'function') {
+        showOnlineMenu();
+      }
+    });
+  }
+});
+
 console.log('✅ auth-ui.js (兼容版) loaded');
