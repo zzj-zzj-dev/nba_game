@@ -1,10 +1,10 @@
 /**
- * auth-ui.js — Firebase 登录状态UI + Firestore 存档
+ * auth-ui.js — Firebase 登录状态UI + Firestore 存档 + 双人联机
  */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC7YvTSDGpid7nPFaICOjWHGWKFRZTXYew",
@@ -21,7 +21,11 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 let currentUser = null;
+let currentRoomId = null;
+let roomUnsubscribe = null;
+let isHostPlayer = false;
 
+// ===================== 初始化 =====================
 function initAuthUI() {
   onAuthStateChanged(auth, (user) => {
     currentUser = user;
@@ -91,6 +95,7 @@ function showLoginPrompt() {
   header.insertBefore(bar, header.firstChild);
 }
 
+// ===================== 存档/读档 =====================
 async function saveGame() {
   if (!currentUser || !battleManager) return;
   
@@ -189,8 +194,7 @@ function logout() {
   });
 }
 
-let currentRoomId = null;
-let isInOnlineMatch = false;
+// ===================== 联机对战 =====================
 
 function showOnlineMenu() {
   if (!currentUser) {
@@ -234,52 +238,19 @@ function showOnlineMenu() {
     const roomInput = document.getElementById('input-room-id');
     
     if (createBtn) {
-      createBtn.onclick = async () => {
-        try {
-          const { createRoom, listenRoom } = await import('./online.js');
-          const roomId = await createRoom(currentUser.uid, currentUser.email?.split('@')[0] || '玩家');
-          hideModal();
-          updateStatusBar('🔗 房间已创建: ' + roomId);
-          addLog('🔗 房间 ' + roomId + ' 已创建，等待对手加入...');
-          
-          // 监听是否有人加入
-          listenRoom(roomId, {
-            onPlayerJoin: (room) => {
-              updateStatusBar('🎮 ' + room.guestName + ' 已加入！');
-              addLog('🎮 ' + room.guestName + ' 已加入房间！');
-              startOnlineGame(roomId, true);
-            },
-            onError: (msg) => {
-              updateStatusBar('⚠️ ' + msg);
-            }
-          });
-        } catch(e) {
-          updateStatusBar('⚠️ 创建房间失败: ' + e.message);
-        }
-      };
+      createBtn.onclick = () => handleCreateRoom();
     }
     
     if (joinBtn && roomInput) {
-      joinBtn.onclick = async () => {
+      joinBtn.onclick = () => {
         const roomId = roomInput.value.trim().toUpperCase();
-        if (!roomId || roomId.length !== 4) {
-          updateStatusBar('⚠️ 请输入4位房间号');
-          return;
-        }
-        try {
-          const { joinRoom, listenRoom } = await import('./online.js');
-          await joinRoom(roomId, currentUser.uid, currentUser.email?.split('@')[0] || '玩家');
-          hideModal();
-          updateStatusBar('🎮 已加入房间 ' + roomId + '，对局开始！');
-          addLog('🎮 已加入房间 ' + roomId);
-          
-          startOnlineGame(roomId, false);
-        } catch(e) {
-          updateStatusBar('⚠️ 加入房间失败: ' + e.message);
-        }
+        if (roomId) handleJoinRoom(roomId);
       };
       roomInput.onkeydown = (e) => {
-        if (e.key === 'Enter') joinBtn.click();
+        if (e.key === 'Enter') {
+          const roomId = roomInput.value.trim().toUpperCase();
+          if (roomId) handleJoinRoom(roomId);
+        }
       };
     }
   }, 100);
@@ -289,46 +260,131 @@ function showOnlineMenu() {
   };
 }
 
-function startOnlineGame(roomId, isHostPlayer) {
-  isInOnlineMatch = true;
-  currentRoomId = roomId;
+async function handleCreateRoom() {
+  const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const username = currentUser.email?.split('@')[0] || '玩家';
   
-  updateStatusBar('🎮 联机对战已开始！');
-  addLog('🎮 双人对战模式启动！' + (isHostPlayer ? '（你是房主）' : '（你是挑战者）'));
-  
-  // 监听对手操作
-  import('./online.js').then(({ listenRoom }) => {
-    listenRoom(roomId, {
-      onOpponentAction: (room) => {
-        if (room.lastAction) {
-          try {
-            const action = JSON.parse(room.lastAction);
-            const isMyAction = (isHostPlayer && action.player === 'host') || (!isHostPlayer && action.player === 'guest');
-            if (!isMyAction) {
-              addLog('🤝 对手: ' + (action.description || '正在操作...'));
-            }
-          } catch(e) {}
-        }
-      },
-      onError: (msg) => {
-        updateStatusBar('⚠️ ' + msg);
-      }
+  try {
+    await setDoc(doc(db, "rooms", roomId), {
+      hostId: currentUser.uid,
+      hostName: username,
+      guestId: '',
+      guestName: '',
+      status: 'waiting',
+      lastAction: '',
+      lastActionBy: '',
+      hostReady: false,
+      guestReady: false,
+      createdAt: new Date().toISOString()
     });
-  });
+    
+    currentRoomId = roomId;
+    isHostPlayer = true;
+    hideModal();
+    updateStatusBar('🔗 房间已创建: ' + roomId);
+    addLog('🔗 房间 ' + roomId + ' 已创建，等待对手加入...');
+    
+    listenRoom(roomId);
+  } catch(e) {
+    updateStatusBar('⚠️ 创建房间失败: ' + e.message);
+  }
+}
+
+async function handleJoinRoom(roomId) {
+  const username = currentUser.email?.split('@')[0] || '玩家';
   
-  import('./online.js').then(({ syncAction }) => {
-    // 拦截游戏操作，同步到房间
-    window.__onlineSyncAction = syncAction;
+  try {
+    const roomRef = doc(db, "rooms", roomId);
+    const roomSnap = await getDoc(roomRef);
+    
+    if (!roomSnap.exists()) {
+      updateStatusBar('⚠️ 房间不存在');
+      return;
+    }
+    
+    const room = roomSnap.data();
+    if (room.status !== 'waiting') {
+      updateStatusBar('⚠️ 房间已开始或已结束');
+      return;
+    }
+    
+    if (room.hostId === currentUser.uid) {
+      updateStatusBar('⚠️ 不能加入自己的房间');
+      return;
+    }
+    
+    await updateDoc(roomRef, {
+      guestId: currentUser.uid,
+      guestName: username,
+      status: 'playing'
+    });
+    
+    currentRoomId = roomId;
+    isHostPlayer = false;
+    hideModal();
+    updateStatusBar('🎮 已加入房间 ' + roomId + '，对局开始！');
+    addLog('🎮 已加入房间 ' + roomId);
+    
+    listenRoom(roomId);
+  } catch(e) {
+    updateStatusBar('⚠️ 加入房间失败: ' + e.message);
+  }
+}
+
+function listenRoom(roomId) {
+  if (roomUnsubscribe) roomUnsubscribe();
+  
+  const roomRef = doc(db, "rooms", roomId);
+  
+  roomUnsubscribe = onSnapshot(roomRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      updateStatusBar('⚠️ 房间已关闭');
+      return;
+    }
+    
+    const room = snapshot.data();
+    
+    // 房主检测到有人加入
+    if (isHostPlayer && room.guestId && room.guestName && room.status === 'playing') {
+      updateStatusBar('🎮 ' + room.guestName + ' 已加入！');
+      addLog('🎮 ' + room.guestName + ' 已加入房间！');
+    }
+    
+    // 检测对手的操作
+    if (room.lastAction && room.lastActionBy !== currentUser.uid) {
+      try {
+        const action = JSON.parse(room.lastAction);
+        addLog('🤝 对手: ' + (action.desc || '操作完成'));
+      } catch(e) {}
+    }
+  }, (error) => {
+    updateStatusBar('⚠️ 连接错误: ' + error.message);
   });
+}
+
+async function syncGameAction(desc) {
+  if (!currentRoomId || !currentUser) return;
+  
+  try {
+    const roomRef = doc(db, "rooms", currentRoomId);
+    await updateDoc(roomRef, {
+      lastAction: JSON.stringify({ desc: desc, time: Date.now() }),
+      lastActionBy: currentUser.uid
+    });
+  } catch(e) {
+    console.error('Sync error:', e);
+  }
 }
 
 function hideModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
 }
 
+// ===================== 挂载到全局 =====================
 window.initAuthUI = initAuthUI;
 window.saveGame = saveGame;
 window.loadGame = loadGame;
 window.showOnlineMenu = showOnlineMenu;
+window.syncGameAction = syncGameAction;
 
-console.log('✅ auth-ui.js (Firebase) loaded');
+console.log('✅ auth-ui.js (Firebase + 联机) loaded');
