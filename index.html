@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NBA卡牌对战 - 核心逻辑</title>
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部信息栏 -->
+    <header id="game-header">
+      <div id="scoreboard">
+        <div class="team-score" id="home-score-display">
+          <span class="team-label" id="home-label">🏠 主场 (勇士)</span>
+          <span class="score-value" id="home-score">0</span>
+        </div>
+        <div id="game-info">
+          <span id="quarter-display" style="color:#ffd700;font-weight:bold;">🏆 先到21分获胜</span>
+          <span id="possession-display">⚽ 球权: 主场</span>
+        </div>
+        <div class="team-score" id="away-score-display">
+          <span class="score-value" id="away-score">0</span>
+          <span class="team-label" id="away-label">客场 (湖人) ✈️</span>
+        </div>
+      </div>
+      <div id="game-status" class="status-bar">⚡ 点击球员开始选秀，跳球决定球权</div>
+    </header>
+
+    <!-- 主战区域 -->
+    <main id="battle-area">
+      <!-- 主场阵容 -->
+      <section id="home-court" class="court-section">
+        <h3>🏠 主场 - 场上阵容</h3>
+        <div id="home-players" class="player-row"></div>
+        <div class="bench-section">
+          <h4>🪑 替补席</h4>
+          <div id="home-bench" class="player-row"></div>
+        </div>
+        <div class="bench-section">
+          <h4>⏱️ 暂停: <span id="home-timeout-display">2</span> 次 | 🔄 换人: <span id="home-substitution-display">3</span> 次</h4>
+        </div>
+      </section>
+
+      <!-- 中间操作区 -->
+      <section id="action-area">
+        <div id="action-panel">
+          <h3 id="action-title">🎯 选择进攻球员</h3>
+          <!-- 进攻球员选择 -->
+          <div id="player-select" class="select-row"></div>
+          <!-- 进攻类型选择 -->
+          <div id="attack-type-select" class="select-row hidden">
+            <button class="btn btn-attack" data-type="mid_range">🎯 中投</button>
+            <button class="btn btn-attack" data-type="drive">💨 突破</button>
+            <button class="btn btn-attack" data-type="post">🏋️ 篮下</button>
+            <button class="btn btn-attack" data-type="three_point">🎯 三分投射</button>
+            <button class="btn btn-attack" data-type="assist">🤝 传球助攻</button>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div id="action-buttons" class="select-row">
+            <button id="btn-timeout" class="btn btn-timeout">⏸️ 暂停</button>
+            <button id="btn-substitute" class="btn btn-substitute">🔄 换人</button>
+            <button id="btn-online" class="btn" style="background:#5a3a7a;color:#fff;">🎮 联机</button>
+            <button id="btn-surrender" class="btn btn-surrender hidden">🏳️ 投降</button>
+          </div>
+        </div>
+        <div id="round-log" class="log-area">
+          <h4>📜 回合日志</h4>
+          <div id="log-messages"></div>
+        </div>
+      </section>
+
+      <!-- 客场阵容 -->
+      <section id="away-court" class="court-section">
+        <h3>✈️ 客场 - 场上阵容</h3>
+        <div id="away-players" class="player-row"></div>
+        <div class="bench-section">
+          <h4>🪑 替补席</h4>
+          <div id="away-bench" class="player-row"></div>
+        </div>
+        <div class="bench-section">
+          <h4>⏱️ 暂停: <span id="away-timeout-display">2</span> 次 | 🔄 换人: <span id="away-substitution-display">3</span> 次</h4>
+        </div>
+      </section>
+    </main>
+
+    <!-- 弹窗 -->
+    <div id="modal-overlay" class="hidden">
+      <div id="modal-content">
+        <h3 id="modal-title"></h3>
+        <div id="modal-body"></div>
+        <div id="modal-footer">
+          <button id="modal-confirm" class="btn btn-primary">确认</button>
+          <button id="modal-cancel" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 脚本加载顺序 -->
+  <script src="js/tools/Constants.js"></script>
+  <script src="js/tools/StaminaTool.js"></script>
+  <script src="js/tools/ProbabilityTool.js"></script>
+  <script src="js/data/PlayerData.js"></script>
+  <script src="js/data/TeamData.js"></script>
+  <script src="js/battle/AIOpponent.js"></script>
+  <script src="js/battle/BattleManager.js"></script>
+  <script src="js/auth-ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

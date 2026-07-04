@@ -1,0 +1,4 @@
+node_modules/
+server/nba_game.db
+.env
+.DS_Store

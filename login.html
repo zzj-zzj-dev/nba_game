@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NBA卡牌对战 - 登录</title>
+  <link rel="stylesheet" href="styles/main.css">
+  <style>
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0a0a2e 0%, #1a1a3e 50%, #0d0d2b 100%);
+    }
+    #login-container {
+      background: rgba(20, 20, 50, 0.95);
+      border: 1px solid #3a3a6a;
+      border-radius: 16px;
+      padding: 40px;
+      width: 380px;
+      text-align: center;
+      box-shadow: 0 0 40px rgba(0,0,0,0.5);
+    }
+    #login-container h1 {
+      color: #ffd700;
+      font-size: 1.6em;
+      margin-bottom: 8px;
+    }
+    #login-container p.subtitle {
+      color: #888;
+      font-size: 0.85em;
+      margin-bottom: 24px;
+    }
+    .input-group {
+      margin-bottom: 14px;
+      text-align: left;
+    }
+    .input-group label {
+      display: block;
+      color: #aaa;
+      font-size: 0.8em;
+      margin-bottom: 4px;
+    }
+    .input-group input {
+      width: 100%;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid #4a4a7a;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1em;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-group input:focus {
+      border-color: #ffd700;
+    }
+    .btn-login {
+      width: 100%;
+      padding: 12px;
+      background: #2a5a7a;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1em;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+    .btn-login:hover {
+      background: #3a7aaa;
+    }
+    .btn-toggle {
+      background: transparent;
+      color: #888;
+      border: none;
+      cursor: pointer;
+      margin-top: 12px;
+      font-size: 0.85em;
+    }
+    .btn-toggle:hover {
+      color: #ccc;
+    }
+    #login-error {
+      color: #ff6b6b;
+      font-size: 0.85em;
+      min-height: 20px;
+      margin-top: 8px;
+    }
+    #login-loading {
+      display: none;
+      color: #ffd700;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="login-container">
+    <h1>🏀 NBA卡牌对战</h1>
+    <p class="subtitle">登录以保存数据并在线对战</p>
+    
+    <form id="login-form" onsubmit="return false;">
+      <div class="input-group">
+        <label>用户名</label>
+        <input type="text" id="login-username" placeholder="输入用户名" required minlength="2">
+      </div>
+      <div class="input-group">
+        <label>密码</label>
+        <input type="password" id="login-password" placeholder="输入密码" required minlength="4">
+      </div>
+      <div id="login-error"></div>
+      <div id="login-loading">⏳ 处理中...</div>
+      <button type="submit" class="btn-login" id="login-submit">登 录</button>
+    </form>
+    
+    <button class="btn-toggle" id="login-toggle">没有账号？点此注册</button>
+    
+    <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #2a2a5a;">
+      <button id="btn-skip-login" style="background:transparent;border:1px dashed #4a4a7a;color:#888;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:0.8em;">
+        ⏭ 跳过登录，直接开始
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // 检测是否通过服务器访问
+    if (window.location.protocol === 'file:') {
+      document.getElementById('login-error').textContent = '⚠️ 请先启动服务器，然后访问 http://localhost:3000/login.html';
+      document.getElementById('login-submit').disabled = true;
+    }
+    const API = window.location.origin + '/api';
+    let isLogin = true;
+    
+    const form = document.getElementById('login-form');
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const errorEl = document.getElementById('login-error');
+    const loadingEl = document.getElementById('login-loading');
+    const submitBtn = document.getElementById('login-submit');
+    const toggleBtn = document.getElementById('login-toggle');
+    const skipBtn = document.getElementById('btn-skip-login');
+
+    toggleBtn.addEventListener('click', () => {
+      isLogin = !isLogin;
+      submitBtn.textContent = isLogin ? '登 录' : '注 册';
+      toggleBtn.textContent = isLogin ? '没有账号？点此注册' : '已有账号？点此登录';
+      errorEl.textContent = '';
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = usernameInput.value.trim();
+      const password = passwordInput.value;
+      
+      if (!username || !password) {
+        errorEl.textContent = '请填写用户名和密码';
+        return;
+      }
+      
+      loadingEl.style.display = 'block';
+      submitBtn.disabled = true;
+      errorEl.textContent = '';
+      
+      try {
+        const endpoint = isLogin ? '/login' : '/register';
+        const res = await fetch(API + endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+          localStorage.setItem('nba_token', data.token);
+          localStorage.setItem('nba_user', JSON.stringify(data.user));
+          window.location.href = 'index.html';
+        } else {
+          errorEl.textContent = data.message;
+        }
+      } catch (err) {
+        errorEl.textContent = '网络错误，请检查服务器是否启动';
+      } finally {
+        loadingEl.style.display = 'none';
+        submitBtn.disabled = false;
+      }
+    });
+
+    // 跳过登录
+    skipBtn.addEventListener('click', () => {
+      localStorage.removeItem('nba_token');
+      localStorage.removeItem('nba_user');
+      window.location.href = 'index.html';
+    });
+
+    // 如果已登录，直接跳转
+    if (localStorage.getItem('nba_token')) {
+      window.location.href = 'index.html';
+    }
+  </script>
+</body>
+</html>
