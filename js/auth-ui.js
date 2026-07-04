@@ -189,8 +189,141 @@ function logout() {
   });
 }
 
+let currentRoomId = null;
+let isInOnlineMatch = false;
+
 function showOnlineMenu() {
-  updateStatusBar('⚠️ 联机功能开发中，敬请期待');
+  if (!currentUser) {
+    updateStatusBar('⚠️ 请先登录才能联机');
+    return;
+  }
+  
+  const modal = document.getElementById('modal-overlay');
+  const modalTitle = document.getElementById('modal-title');
+  const modalBody = document.getElementById('modal-body');
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
+  
+  modalTitle.textContent = '🎮 联机对战';
+  modalBody.innerHTML = `
+    <div style="margin:10px 0;">
+      <button id="btn-online-create" class="btn btn-primary" style="width:100%;margin-bottom:8px;padding:12px;font-size:1.1em;">
+        🏠 创建房间
+      </button>
+    </div>
+    <div style="margin:15px 0;text-align:center;color:#888;">— 或 —</div>
+    <div style="margin:10px 0;">
+      <input type="text" id="input-room-id" placeholder="输入4位房间号加入" 
+        style="width:100%;padding:10px;background:rgba(255,255,255,0.06);border:1px solid #4a4a7a;border-radius:6px;color:#fff;text-align:center;font-size:1em;letter-spacing:4px;">
+      <button id="btn-online-join" class="btn btn-secondary" style="width:100%;margin-top:8px;padding:10px;">
+        🔗 加入房间
+      </button>
+    </div>
+    <div id="online-status" style="margin-top:10px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;font-size:0.85em;color:#888;">
+      🟢 已登录，可以联机
+    </div>
+  `;
+  
+  confirmBtn.textContent = '关闭';
+  cancelBtn.style.display = 'none';
+  modal.classList.remove('hidden');
+  
+  setTimeout(() => {
+    const createBtn = document.getElementById('btn-online-create');
+    const joinBtn = document.getElementById('btn-online-join');
+    const roomInput = document.getElementById('input-room-id');
+    
+    if (createBtn) {
+      createBtn.onclick = async () => {
+        try {
+          const { createRoom, listenRoom } = await import('./online.js');
+          const roomId = await createRoom(currentUser.uid, currentUser.email?.split('@')[0] || '玩家');
+          hideModal();
+          updateStatusBar('🔗 房间已创建: ' + roomId);
+          addLog('🔗 房间 ' + roomId + ' 已创建，等待对手加入...');
+          
+          // 监听是否有人加入
+          listenRoom(roomId, {
+            onPlayerJoin: (room) => {
+              updateStatusBar('🎮 ' + room.guestName + ' 已加入！');
+              addLog('🎮 ' + room.guestName + ' 已加入房间！');
+              startOnlineGame(roomId, true);
+            },
+            onError: (msg) => {
+              updateStatusBar('⚠️ ' + msg);
+            }
+          });
+        } catch(e) {
+          updateStatusBar('⚠️ 创建房间失败: ' + e.message);
+        }
+      };
+    }
+    
+    if (joinBtn && roomInput) {
+      joinBtn.onclick = async () => {
+        const roomId = roomInput.value.trim().toUpperCase();
+        if (!roomId || roomId.length !== 4) {
+          updateStatusBar('⚠️ 请输入4位房间号');
+          return;
+        }
+        try {
+          const { joinRoom, listenRoom } = await import('./online.js');
+          await joinRoom(roomId, currentUser.uid, currentUser.email?.split('@')[0] || '玩家');
+          hideModal();
+          updateStatusBar('🎮 已加入房间 ' + roomId + '，对局开始！');
+          addLog('🎮 已加入房间 ' + roomId);
+          
+          startOnlineGame(roomId, false);
+        } catch(e) {
+          updateStatusBar('⚠️ 加入房间失败: ' + e.message);
+        }
+      };
+      roomInput.onkeydown = (e) => {
+        if (e.key === 'Enter') joinBtn.click();
+      };
+    }
+  }, 100);
+  
+  confirmBtn.onclick = () => {
+    modal.classList.add('hidden');
+  };
+}
+
+function startOnlineGame(roomId, isHostPlayer) {
+  isInOnlineMatch = true;
+  currentRoomId = roomId;
+  
+  updateStatusBar('🎮 联机对战已开始！');
+  addLog('🎮 双人对战模式启动！' + (isHostPlayer ? '（你是房主）' : '（你是挑战者）'));
+  
+  // 监听对手操作
+  import('./online.js').then(({ listenRoom }) => {
+    listenRoom(roomId, {
+      onOpponentAction: (room) => {
+        if (room.lastAction) {
+          try {
+            const action = JSON.parse(room.lastAction);
+            const isMyAction = (isHostPlayer && action.player === 'host') || (!isHostPlayer && action.player === 'guest');
+            if (!isMyAction) {
+              addLog('🤝 对手: ' + (action.description || '正在操作...'));
+            }
+          } catch(e) {}
+        }
+      },
+      onError: (msg) => {
+        updateStatusBar('⚠️ ' + msg);
+      }
+    });
+  });
+  
+  import('./online.js').then(({ syncAction }) => {
+    // 拦截游戏操作，同步到房间
+    window.__onlineSyncAction = syncAction;
+  });
+}
+
+function hideModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
 }
 
 window.initAuthUI = initAuthUI;
