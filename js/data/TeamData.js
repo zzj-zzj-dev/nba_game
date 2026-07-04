@@ -31,7 +31,7 @@ function buildHomeTeam() {
     createPlayer({
       id: 'GSW_01', playerName: '斯蒂芬·库里', position: 'PG', teamName: '勇士',
       attrs: { midRangeShot: 90, drive: 82, post: 50, threePointAttack: 99, playmaking: 92, perimeterDefense: 70, interiorDefense: 55, rebounding: 60 },
-      badges: [createBadge('三分之神', 'threePointAttack', 8)],
+      badges: [createBadge('三分大师', 'threePointAttack', 8)],
       legendaryPairs: ['SplashBrothers'], freeThrowRating: 90
     }),
     createPlayer({
