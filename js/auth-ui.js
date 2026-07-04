@@ -1,33 +1,41 @@
 /**
- * auth-ui.js — 登录状态UI + 联机入口
- * 与 main.js 配合使用，添加用户信息显示和联机功能
+ * auth-ui.js — PocketBase 登录 + 存档 + 联机
+ * 使用 PocketBase SDK 直接连接服务端
  */
 
-// ===================== 用户状态 =====================
+import PocketBase from 'https://cdn.jsdelivr.net/npm/pocketbase@0.22.0/dist/pocketbase.es.mjs';
+
+const PB_URL = window.location.origin; // PocketBase 和前端同域名
+const pb = new PocketBase(PB_URL);
+
 let currentUser = null;
-let ws = null;
-let wsConnected = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
-  // 读取本地token
-  const token = localStorage.getItem('nba_token');
-  const userData = localStorage.getItem('nba_user');
-  
-  if (token && userData) {
-    currentUser = JSON.parse(userData);
-    currentUser.token = token;
-    showUserInfo();
+  // 检查是否已有登录状态
+  if (pb.authStore.isValid) {
+    currentUser = pb.authStore.model;
+    showUserInfo(currentUser);
   } else {
     showLoginPrompt();
   }
+
+  // 监听登录状态变化
+  pb.authStore.onChange((token, model) => {
+    if (model) {
+      currentUser = model;
+      showUserInfo(model);
+    } else {
+      currentUser = null;
+      showLoginPrompt();
+    }
+  });
 }
 
-function showUserInfo() {
+function showUserInfo(user) {
   const header = document.querySelector('#game-header');
   if (!header) return;
   
-  // 移除旧的用户条
   const oldBar = document.getElementById('user-bar');
   if (oldBar) oldBar.remove();
   
@@ -40,8 +48,10 @@ function showUserInfo() {
     font-size: 0.8em;
   `;
   
+  const name = user.username || user.email?.split('@')[0] || '用户';
+  
   bar.innerHTML = `
-    <span>👤 ${currentUser.username}</span>
+    <span>👤 ${name}</span>
     <span>
       <button class="btn" style="background:#2a5a6a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-save-game">💾 存档</button>
       <button class="btn" style="background:#5a3a7a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-load-game">📂 读档</button>
@@ -51,7 +61,6 @@ function showUserInfo() {
   
   header.insertBefore(bar, header.firstChild);
   
-  // 绑定事件
   document.getElementById('btn-save-game').addEventListener('click', saveGame);
   document.getElementById('btn-load-game').addEventListener('click', loadGame);
   document.getElementById('btn-logout').addEventListener('click', logout);
@@ -115,23 +124,27 @@ async function saveGame() {
   };
   
   try {
-    const res = await fetch('/api/save', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + currentUser.token
-      },
-      body: JSON.stringify({ gameData })
+    // 查找是否已有存档
+    const records = await pb.collection('saves').getFullList({
+      filter: `user = "${currentUser.id}"`
     });
-    const data = await res.json();
-    if (data.success) {
-      updateStatusBar('💾 存档成功！');
-      addLog('💾 游戏已保存');
+    
+    if (records.length > 0) {
+      await pb.collection('saves').update(records[0].id, {
+        gameData: gameData
+      });
     } else {
-      updateStatusBar('⚠️ 存档失败: ' + data.message);
+      await pb.collection('saves').create({
+        user: currentUser.id,
+        gameData: gameData
+      });
     }
+    
+    updateStatusBar('💾 存档成功！');
+    addLog('💾 游戏已保存到云端');
   } catch (e) {
-    updateStatusBar('⚠️ 服务器连接失败');
+    updateStatusBar('⚠️ 存档失败: ' + e.message);
+    console.error(e);
   }
 }
 
@@ -139,28 +152,22 @@ async function loadGame() {
   if (!currentUser || !battleManager) return;
   
   try {
-    const res = await fetch('/api/save', {
-      headers: { 'Authorization': 'Bearer ' + currentUser.token }
+    const records = await pb.collection('saves').getFullList({
+      filter: `user = "${currentUser.id}"`
     });
-    const data = await res.json();
     
-    if (!data.success) {
+    if (records.length === 0) {
       updateStatusBar('⚠️ 没有找到存档');
       return;
     }
     
-    const gd = data.data;
+    const gd = records[0].gameData;
     
-    // 恢复球员状态
     battleManager.homePlayers.forEach((p, i) => {
-      if (gd.homePlayers[i]) {
-        Object.assign(p, gd.homePlayers[i]);
-      }
+      if (gd.homePlayers[i]) Object.assign(p, gd.homePlayers[i]);
     });
     battleManager.awayPlayers.forEach((p, i) => {
-      if (gd.awayPlayers[i]) {
-        Object.assign(p, gd.awayPlayers[i]);
-      }
+      if (gd.awayPlayers[i]) Object.assign(p, gd.awayPlayers[i]);
     });
     
     battleManager.homeScore = gd.homeScore || 0;
@@ -185,148 +192,21 @@ async function loadGame() {
     resetActionState();
     
     updateStatusBar('📂 读档成功！');
-    addLog(`📂 已读取存档 (${data.updatedAt})`);
+    addLog('📂 已读取云端存档');
   } catch (e) {
     updateStatusBar('⚠️ 读档失败: ' + e.message);
+    console.error(e);
   }
 }
 
 function logout() {
-  localStorage.removeItem('nba_token');
-  localStorage.removeItem('nba_user');
+  pb.authStore.clear();
   window.location.href = 'login.html';
-}
-
-// ===================== 联机对战 (WebSocket) =====================
-function connectWebSocket() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
-  
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${location.host}`);
-  
-  ws.onopen = () => {
-    wsConnected = true;
-    // 发送认证
-    if (currentUser && currentUser.token) {
-      ws.send(JSON.stringify({ type: 'auth', token: currentUser.token }));
-    }
-  };
-  
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    handleWSMessage(data);
-  };
-  
-  ws.onclose = () => {
-    wsConnected = false;
-  };
-}
-
-function handleWSMessage(data) {
-  switch (data.type) {
-    case 'auth_ok':
-      console.log('✅ WebSocket 认证成功');
-      break;
-    case 'room_created':
-      updateStatusBar(`🔗 房间已创建: ${data.roomId}`);
-      addLog(`🔗 房间 ${data.roomId} 已创建，等待对手加入...`);
-      break;
-    case 'game_start':
-      updateStatusBar('🎮 对战开始！');
-      addLog('🎮 联机对战开始！');
-      break;
-    case 'opponent_action':
-      // 对手的操作，需要同步到游戏
-      if (data.action) {
-        // 联机对战逻辑（后续实现）
-      }
-      break;
-    case 'opponent_disconnected':
-      updateStatusBar('⚠️ 对手已断开连接');
-      addLog('⚠️ 对手断开连接，游戏将暂停');
-      break;
-  }
-}
-
-// ===================== 联机入口UI =====================
-function showOnlineMenu() {
-  const modal = document.getElementById('modal-overlay');
-  const modalTitle = document.getElementById('modal-title');
-  const modalBody = document.getElementById('modal-body');
-  const confirmBtn = document.getElementById('modal-confirm');
-  const cancelBtn = document.getElementById('modal-cancel');
-  
-  modalTitle.textContent = '🎮 联机对战';
-  modalBody.innerHTML = `
-    <div style="margin:10px 0;">
-      <button id="btn-create-room" class="btn btn-primary" style="width:100%;margin-bottom:8px;">
-        🏠 创建房间
-      </button>
-    </div>
-    <div style="margin:10px 0;">
-      <input type="text" id="input-room-id" placeholder="输入房间号加入" 
-        style="width:100%;padding:8px;background:rgba(255,255,255,0.06);border:1px solid #4a4a7a;border-radius:6px;color:#fff;text-align:center;font-size:1em;">
-      <button id="btn-join-room" class="btn btn-secondary" style="width:100%;margin-top:6px;">
-        🔗 加入房间
-      </button>
-    </div>
-    <div style="margin-top:10px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;">
-      <div style="font-size:0.8em;color:#888;">⚡ 需要先登录才能联机对战</div>
-      <div style="font-size:0.8em;color:#888;" id="ws-status">🔴 未连接</div>
-    </div>
-  `;
-  
-  confirmBtn.textContent = '关闭';
-  cancelBtn.style.display = 'none';
-  modal.classList.remove('hidden');
-  
-  // 更新WS状态
-  const wsStatus = document.getElementById('ws-status');
-  if (wsStatus) {
-    wsStatus.textContent = wsConnected ? '🟢 已连接服务器' : '🟡 正在连接...';
-  }
-  
-  if (!wsConnected && currentUser) {
-    connectWebSocket();
-    setTimeout(() => {
-      const st = document.getElementById('ws-status');
-      if (st) st.textContent = wsConnected ? '🟢 已连接服务器' : '🔴 未连接';
-    }, 1000);
-  }
-  
-  // 绑定事件
-  setTimeout(() => {
-    const createBtn = document.getElementById('btn-create-room');
-    const joinBtn = document.getElementById('btn-join-room');
-    const roomInput = document.getElementById('input-room-id');
-    
-    if (createBtn) {
-      createBtn.onclick = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'create_room' }));
-        }
-      };
-    }
-    
-    if (joinBtn && roomInput) {
-      joinBtn.onclick = () => {
-        const roomId = roomInput.value.trim();
-        if (roomId && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'join_room', roomId }));
-        }
-      };
-    }
-  }, 100);
-  
-  confirmBtn.onclick = () => {
-    modal.classList.add('hidden');
-  };
 }
 
 // ===================== 挂载到全局 =====================
 window.initAuthUI = initAuthUI;
-window.showOnlineMenu = showOnlineMenu;
 window.saveGame = saveGame;
 window.loadGame = loadGame;
 
-console.log('✅ auth-ui.js loaded');
+console.log('✅ auth-ui.js (PocketBase) loaded');
