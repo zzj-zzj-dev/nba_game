@@ -194,6 +194,7 @@ function logout() {
 // ===================== 联机对战 =====================
 
 function showOnlineMenu() {
+  console.log('🔍 showOnlineMenu 被调用了');
   if (!currentUser) {
     updateStatusBar('⚠️ 请先登录才能联机');
     return;
@@ -258,6 +259,8 @@ function showOnlineMenu() {
 }
 
 async function handleCreateRoom() {
+  console.log('🔍 handleCreateRoom 被调用了');
+  console.log('🔍 currentUser =', !!currentUser);
   const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
   const username = currentUser.email?.split('@')[0] || '玩家';
   
@@ -380,8 +383,11 @@ window.showOnlineMenu = showOnlineMenu;
 window.syncGameAction = syncGameAction;
 
 // 延迟绑定联机按钮（等 main.js 初始化完成后）
+console.log('🔍 auth-ui: 开始延迟绑定联机按钮');
+console.log('🔍 auth-ui: window.showOnlineMenu =', typeof window.showOnlineMenu);
 setTimeout(() => {
   const btnOnline = document.getElementById('btn-online');
+  console.log('🔍 auth-ui: btnOnline found =', !!btnOnline);
   if (btnOnline) {
     // 移除 main.js 绑定的旧事件
     const newBtn = btnOnline.cloneNode(true);
