@@ -73,10 +73,9 @@
     </div>
   </div>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script>
     const firebaseConfig = {
       apiKey: "AIzaSyC7YvTSDGpid7nPFaICOjWHGWKFRZTXYew",
       authDomain: "nba-card-game.firebaseapp.com",
@@ -87,8 +86,8 @@
       measurementId: "G-32PFCZSVVP"
     };
     
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
 
     let isLogin = true;
     const form = document.getElementById('login-form');
@@ -101,7 +100,7 @@
     const skipBtn = document.getElementById('btn-skip-login');
 
     // 已登录直接跳转
-    onAuthStateChanged(auth, (user) => {
+    auth.onAuthStateChanged((user) => {
       if (user) {
         window.location.href = 'index.html';
       }
@@ -130,9 +129,9 @@
       
       try {
         if (isLogin) {
-          await signInWithEmailAndPassword(auth, email, password);
+          await auth.signInWithEmailAndPassword(email, password);
         } else {
-          await createUserWithEmailAndPassword(auth, email, password);
+          await auth.createUserWithEmailAndPassword(email, password);
         }
         window.location.href = 'index.html';
       } catch (err) {

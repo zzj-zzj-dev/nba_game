@@ -1,10 +1,7 @@
 /**
- * auth-ui.js — Firebase 登录状态UI + Firestore 存档 + 双人联机
+ * auth-ui.js — Firebase 登录 + 存档 + 联机（兼容版）
+ * 使用 firebase-compat SDK
  */
-
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyC7YvTSDGpid7nPFaICOjWHGWKFRZTXYew",
@@ -16,9 +13,9 @@ const firebaseConfig = {
   measurementId: "G-32PFCZSVVP"
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
 
 let currentUser = null;
 let currentRoomId = null;
@@ -27,7 +24,7 @@ let isHostPlayer = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
-  onAuthStateChanged(auth, (user) => {
+  auth.onAuthStateChanged((user) => {
     currentUser = user;
     if (user) {
       showUserInfo(user);
@@ -129,7 +126,7 @@ async function saveGame() {
   };
   
   try {
-    await setDoc(doc(db, "saves", currentUser.uid), {
+    await db.collection('saves').doc(currentUser.uid).set({
       gameData,
       updatedAt: new Date().toISOString()
     });
@@ -144,9 +141,9 @@ async function loadGame() {
   if (!currentUser || !battleManager) return;
   
   try {
-    const docSnap = await getDoc(doc(db, "saves", currentUser.uid));
+    const docSnap = await db.collection('saves').doc(currentUser.uid).get();
     
-    if (!docSnap.exists()) {
+    if (!docSnap.exists) {
       updateStatusBar('⚠️ 没有找到存档');
       return;
     }
@@ -189,7 +186,7 @@ async function loadGame() {
 }
 
 function logout() {
-  signOut(auth).then(() => {
+  auth.signOut().then(() => {
     window.location.href = 'login.html';
   });
 }
@@ -265,7 +262,7 @@ async function handleCreateRoom() {
   const username = currentUser.email?.split('@')[0] || '玩家';
   
   try {
-    await setDoc(doc(db, "rooms", roomId), {
+    await db.collection('rooms').doc(roomId).set({
       hostId: currentUser.uid,
       hostName: username,
       guestId: '',
@@ -294,10 +291,10 @@ async function handleJoinRoom(roomId) {
   const username = currentUser.email?.split('@')[0] || '玩家';
   
   try {
-    const roomRef = doc(db, "rooms", roomId);
-    const roomSnap = await getDoc(roomRef);
+    const roomRef = db.collection('rooms').doc(roomId);
+    const roomSnap = await roomRef.get();
     
-    if (!roomSnap.exists()) {
+    if (!roomSnap.exists) {
       updateStatusBar('⚠️ 房间不存在');
       return;
     }
@@ -313,7 +310,7 @@ async function handleJoinRoom(roomId) {
       return;
     }
     
-    await updateDoc(roomRef, {
+    await roomRef.update({
       guestId: currentUser.uid,
       guestName: username,
       status: 'playing'
@@ -334,23 +331,19 @@ async function handleJoinRoom(roomId) {
 function listenRoom(roomId) {
   if (roomUnsubscribe) roomUnsubscribe();
   
-  const roomRef = doc(db, "rooms", roomId);
-  
-  roomUnsubscribe = onSnapshot(roomRef, (snapshot) => {
-    if (!snapshot.exists()) {
+  roomUnsubscribe = db.collection('rooms').doc(roomId).onSnapshot((snapshot) => {
+    if (!snapshot.exists) {
       updateStatusBar('⚠️ 房间已关闭');
       return;
     }
     
     const room = snapshot.data();
     
-    // 房主检测到有人加入
     if (isHostPlayer && room.guestId && room.guestName && room.status === 'playing') {
       updateStatusBar('🎮 ' + room.guestName + ' 已加入！');
       addLog('🎮 ' + room.guestName + ' 已加入房间！');
     }
     
-    // 检测对手的操作
     if (room.lastAction && room.lastActionBy !== currentUser.uid) {
       try {
         const action = JSON.parse(room.lastAction);
@@ -366,8 +359,7 @@ async function syncGameAction(desc) {
   if (!currentRoomId || !currentUser) return;
   
   try {
-    const roomRef = doc(db, "rooms", currentRoomId);
-    await updateDoc(roomRef, {
+    await db.collection('rooms').doc(currentRoomId).update({
       lastAction: JSON.stringify({ desc: desc, time: Date.now() }),
       lastActionBy: currentUser.uid
     });
@@ -387,4 +379,4 @@ window.loadGame = loadGame;
 window.showOnlineMenu = showOnlineMenu;
 window.syncGameAction = syncGameAction;
 
-console.log('✅ auth-ui.js (Firebase + 联机) loaded');
+console.log('✅ auth-ui.js (兼容版) loaded');
