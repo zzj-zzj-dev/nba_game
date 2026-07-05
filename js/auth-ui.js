@@ -286,7 +286,8 @@ async function handleCreateRoom() {
     
     listenRoom(roomId);
   } catch(e) {
-    updateStatusBar('⚠️ 创建房间失败: ' + e.message);
+    console.error('创建房间错误:', e);
+    alert('创建房间失败:\n' + e.message + '\n\n请把这段报错截图发给开发者');
   }
 }
 
