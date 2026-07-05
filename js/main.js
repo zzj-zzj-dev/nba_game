@@ -1,19 +1,783 @@
-/**
- * ============================================================================
- * main.js — 游戏入口文件（21分制简化版）
- * 玩家主场进攻选择球员+进攻类型后自动执行，AI回合自动执行
- * 无需手动选择防守球员，无需节次管理
- *============================================================================
- */
+// ============================================================================
+// main.js — 游戏主逻辑（卡牌系统 + 对战集成）
+// 功能：金币管理、抽卡、阵容管理、融合升星、分解、对战
+// ============================================================================
 
 // ===================== 全局状态 =====================
+let coins = 0;
+let backpack = [];        // 背包卡牌 { id, masterId, stars, inLineup }
+let lineup = {            // 阵容
+  pg: null, sg: null, sf: null, pf: null, c: null,
+  bench1: null, bench2: null, bench3: null
+};
+let currentTab = 'home';
+let isInBattle = false;
 let battleManager = null;
-let selectedAttacker = null;
-let selectedAttackType = null;
-let currentStep = 'select_attacker';
-let isProcessing = false;
+let currentBattleDifficulty = "normal";
 
-// ===================== DOM 引用 =====================
+// ===================== 常量 =====================
+const SLOTS = ['pg','sg','sf','pf','c','bench1','bench2','bench3'];
+const POS_TO_LABEL = { pg:'PG', sg:'SG', sf:'SF', pf:'PF', c:'C', bench1:'替补1', bench2:'替补2', bench3:'替补3' };
+
+// ===================== 初始化 =====================
+function initGame() {
+  console.log('NBA卡牌对战初始化...');
+  loadFromStorage();
+  
+  // 检查是否首次进入（开局福利）
+  const freeClaimed = localStorage.getItem(GameConfig.LS_KEYS.FREE_PACKS_CLAIMED);
+  if (!freeClaimed) {
+    setTimeout(() => showFreePackModal(), 500);
+  }
+  
+  updateUI();
+  bindEvents();
+  
+  // 初始化登录系统
+  if (typeof initAuthUI === 'function') {
+    initAuthUI();
+  }
+  
+  console.log('初始化完成！金币:', coins, '背包:', backpack.length);
+}
+
+function showFreePackModal() {
+  const modal = document.getElementById('freePackModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function claimFreePacks() {
+  const count = GameConfig.PACK.FREE_PACKS_ON_START;
+  const results = [];
+  for (let i = 0; i < count; i++) {
+    const card = pullCard('basic');
+    if (card) {
+      card.id = generateCardId();
+      backpack.push(card);
+      results.push(card);
+    }
+  }
+  localStorage.setItem(GameConfig.LS_KEYS.FREE_PACKS_CLAIMED, 'true');
+  saveToStorage();
+  
+  // 关闭免费弹窗
+  const modal = document.getElementById('freePackModal');
+  if (modal) modal.classList.add('hidden');
+  
+  // 显示抽卡结果
+  showPackAnimationResults(results, '🎁 开局福利！获得以下卡牌');
+  updateUI();
+}
+
+// ===================== 金币系统 =====================
+function addCoins(amount) {
+  coins += amount;
+  saveToStorage();
+  updateCoinDisplay();
+}
+
+function spendCoins(amount) {
+  if (coins < amount) {
+    showModal('金币不足', `需要 ${amount} 金币，当前只有 ${coins} 金币`);
+    return false;
+  }
+  coins -= amount;
+  saveToStorage();
+  updateCoinDisplay();
+  return true;
+}
+
+function updateCoinDisplay() {
+  const disp = document.getElementById('coinCount');
+  if (disp) disp.textContent = coins;
+  const homeDisp = document.getElementById('homeCoins');
+  if (homeDisp) homeDisp.textContent = coins;
+}
+
+// ===================== 存储系统 =====================
+function saveToStorage() {
+  localStorage.setItem(GameConfig.LS_KEYS.COINS, coins);
+  localStorage.setItem(GameConfig.LS_KEYS.BACKPACK, JSON.stringify(backpack.map(c => ({
+    id: c.id,
+    masterId: c.masterId,
+    stars: c.stars || 0,
+    inLineup: c.inLineup || false
+  }))));
+  // 保存阵容（存卡牌id）
+  const lineupData = {};
+  for (const slot of SLOTS) {
+    const card = lineup[slot];
+    lineupData[slot] = card ? card.id : null;
+  }
+  localStorage.setItem(GameConfig.LS_KEYS.LINEUP, JSON.stringify(lineupData));
+}
+
+function loadFromStorage() {
+  coins = parseInt(localStorage.getItem(GameConfig.LS_KEYS.COINS)) || GameConfig.COINS.STARTING_COINS;
+  
+  const bpData = localStorage.getItem(GameConfig.LS_KEYS.BACKPACK);
+  if (bpData) {
+    try {
+      const raw = JSON.parse(bpData);
+      backpack = raw.map(r => ({
+        id: r.id,
+        masterId: r.masterId,
+        stars: r.stars || 0,
+        inLineup: r.inLineup || false
+      }));
+    } catch(e) { backpack = []; }
+  } else {
+    backpack = [];
+  }
+  
+  const lineupData = localStorage.getItem(GameConfig.LS_KEYS.LINEUP);
+  if (lineupData) {
+    try {
+      const raw = JSON.parse(lineupData);
+      for (const slot of SLOTS) {
+        const cid = raw[slot];
+        if (cid) {
+          const card = backpack.find(c => c.id === cid);
+          lineup[slot] = card || null;
+        } else {
+          lineup[slot] = null;
+        }
+      }
+    } catch(e) { resetLineup(); }
+  } else {
+    resetLineup();
+  }
+}
+
+function resetLineup() {
+  for (const slot of SLOTS) lineup[slot] = null;
+}
+
+// 生成唯一卡牌ID
+let cardIdCounter = Date.now();
+function generateCardId() {
+  return 'card_' + (cardIdCounter++);
+}
+
+// ===================== 卡牌系统 =====================
+function getBackpackCardById(id) {
+  return backpack.find(c => c.id === id) || null;
+}
+
+function getMasterByCard(card) {
+  return getMasterById(card.masterId);
+}
+
+function isCardInLineup(card) {
+  for (const slot of SLOTS) {
+    if (lineup[slot] && lineup[slot].id === card.id) return true;
+  }
+  return false;
+}
+
+// ===================== 抽卡系统 =====================
+function pullCard(packType) {
+  const rates = GameConfig.PACK_RATES[packType.toUpperCase()];
+  if (!rates) return null;
+  
+  const r = Math.random();
+  let cum = 0;
+  let selectedTier = 'N';
+  for (const [tier, rate] of Object.entries(rates)) {
+    cum += rate;
+    if (r <= cum) { selectedTier = tier; break; }
+  }
+  
+  // 从该档位随机选球员
+  const pool = getMastersByTier(selectedTier);
+  if (pool.length === 0) return null;
+  const master = pool[Math.floor(Math.random() * pool.length)];
+  
+  return {
+    id: generateCardId(),
+    masterId: master.id,
+    stars: 0,
+    inLineup: false
+  };
+}
+
+function buyPack(packType) {
+  if (isInBattle) { showModal('提示', '请在比赛结束后再抽卡'); return; }
+  
+  const prices = { basic: GameConfig.PACK.BASIC_PRICE, mid: GameConfig.PACK.MID_PRICE, premium: GameConfig.PACK.PREMIUM_PRICE };
+  const price = prices[packType];
+  if (!price) return;
+  
+  if (!spendCoins(price)) return;
+  
+  // 抽卡
+  const card = pullCard(packType);
+  if (!card) {
+    addCoins(price); // 退款
+    showModal('错误', '抽卡失败，请重试');
+    return;
+  }
+  
+  // 加入背包
+  card.id = generateCardId();
+  backpack.push(card);
+  saveToStorage();
+  updateUI();
+  
+  // 展示抽卡结果
+  showPackAnimationResults([card], `📦 ${packType === 'basic' ? '初级基础' : packType === 'mid' ? '中级精英' : '高级巨星'}卡包`);
+}
+
+// ===================== 抽卡动画 =====================
+function showPackAnimationResults(cards, title) {
+  const modal = document.getElementById('packResultModal');
+  const resultArea = document.getElementById('packResult');
+  const cardDisplay = document.getElementById('packCardDisplay');
+  const effect = document.getElementById('packRarityEffect');
+  
+  if (!modal || !resultArea || !cardDisplay || !effect) return;
+  
+  // 分析稀有度
+  let highestTier = 'N';
+  const cardElements = [];
+  
+  for (const card of cards) {
+    const master = getMasterById(card.masterId);
+    if (!master) continue;
+    const tier = master.tier;
+    if (['GOAT','SSR','SR'].includes(tier) && 
+        ['GOAT','SSR','SR'].indexOf(tier) < ['GOAT','SSR','SR'].indexOf(highestTier)) {
+      highestTier = tier;
+    }
+    
+    const tierColors = { GOAT:'#7c3aed', SSR:'#d97706', SR:'#2563eb', R:'#16a34a', N:'#6b7280' };
+    const tierLabels = { GOAT:'历史巨星', SSR:'传奇', SR:'史诗', R:'稀有', N:'普通' };
+    const color = tierColors[tier] || '#666';
+    
+    cardElements.push(`
+      <div class="pack-single-card" style="border-color:${color};${tier === 'GOAT' ? 'animation:rainbowGlow 1.5s infinite;' : ''}">
+        <div class="pack-card-name" style="color:${color}">${master.name}</div>
+        <div class="pack-card-team">${master.team} | ${master.year}</div>
+        <div class="pack-card-tier" style="color:${color}">${tierLabels[tier] || tier} | 总评 ${master.overall}</div>
+      </div>
+    `);
+  }
+  
+  // 特效
+  const effects = {
+    GOAT: '🎆 彩虹炸裂！',
+    SSR: '✨ 金色闪光！',
+    SR: '💜 紫色炫光！',
+    R: '💙 蓝色光芒！',
+    N: '⚪ 白色微光'
+  };
+  
+  effect.innerHTML = `<div class="effect-text">${effects[highestTier] || ''}</div>`;
+  if (highestTier === 'GOAT') effect.className = 'rarity-effect goat-effect';
+  else if (highestTier === 'SSR') effect.className = 'rarity-effect ssr-effect';
+  else if (highestTier === 'SR') effect.className = 'rarity-effect sr-effect';
+  else if (highestTier === 'R') effect.className = 'rarity-effect r-effect';
+  else effect.className = 'rarity-effect n-effect';
+  
+  cardDisplay.innerHTML = cardElements.join('');
+  
+  // 标题
+  const titleEl = document.createElement('h3');
+  titleEl.textContent = title || '抽卡结果';
+  titleEl.style.textAlign = 'center';
+  titleEl.style.marginBottom = '15px';
+  titleEl.style.color = '#ffd700';
+  cardDisplay.insertBefore(titleEl, cardDisplay.firstChild);
+  
+  resultArea.classList.remove('hidden');
+  modal.classList.remove('hidden');
+}
+
+function closePackResult() {
+  const modal = document.getElementById('packResultModal');
+  const resultArea = document.getElementById('packResult');
+  const opening = document.getElementById('packOpening');
+  if (modal) modal.classList.add('hidden');
+  if (resultArea) resultArea.classList.add('hidden');
+  if (opening) opening.classList.add('hidden');
+  updateUI();
+}
+
+// ===================== 阵容管理 =====================
+function slotClick(slot) {
+  if (isInBattle) { showModal('提示', '比赛进行中，无法调整阵容'); return; }
+  
+  const currentCard = lineup[slot];
+  
+  // 如果有球员在槽位，先让他下阵到背包
+  if (currentCard) {
+    // 下阵
+    currentCard.inLineup = false;
+    lineup[slot] = null;
+    saveToStorage();
+    updateUI();
+    renderBackpack();
+    return;
+  }
+  
+  // 空位 - 选择球员上阵
+  showSelectPlayerModal(slot);
+}
+
+function showSelectPlayerModal(slot) {
+  const modal = document.getElementById('modal-overlay');
+  const body = document.getElementById('modal-body');
+  const title = document.getElementById('modal-title');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  title.textContent = `📋 选择球员上阵 ${POS_TO_LABEL[slot] || slot}`;
+  body.innerHTML = '';
+  
+  // 获取该位置可用的背包卡（未上阵的）
+  const availableCards = backpack.filter(c => !c.inLineup);
+  const slotPos = slot.startsWith('bench') ? null : slot.toUpperCase();
+  
+  if (availableCards.length === 0) {
+    body.innerHTML = '<p style="color:#aaa;">背包中没有可用的球员，请先去抽卡！</p>';
+    modal.classList.remove('hidden');
+    confirm.textContent = '知道了';
+    confirm.onclick = () => modal.classList.add('hidden');
+    cancel.style.display = 'none';
+    return;
+  }
+  
+  // 显示所有可用卡牌
+  availableCards.forEach(card => {
+    const master = getMasterById(card.masterId);
+    if (!master) return;
+    
+    const tierColors = { GOAT:'#7c3aed', SSR:'#d97706', SR:'#2563eb', R:'#16a34a', N:'#6b7280' };
+    const color = tierColors[master.tier] || '#666';
+    
+    // 位置适配检查
+    const canPlaySlot = slot.startsWith('bench') ? true : master.positions.includes(slotPos);
+    const penalty = canPlaySlot ? 0 : GameConfig.POSITION_PENALTY;
+    const overall = master.overall - (penalty > 0 ? Math.round(master.overall * penalty) : 0);
+    
+    const cardEl = document.createElement('div');
+    cardEl.className = 'select-card-item';
+    if (!canPlaySlot) cardEl.classList.add('position-mismatch');
+    cardEl.style.borderColor = color;
+    cardEl.innerHTML = `
+      <div class="sc-name" style="color:${color}">${master.name} ${card.stars > 0 ? '⭐'.repeat(card.stars) : ''}</div>
+      <div class="sc-info">${master.team} | ${master.year} | ${master.tier}</div>
+      <div class="sc-pos">可打: ${master.positions.join('/')} | 总评: ${overall}${penalty > 0 ? ' ⚠️-10%' : ''}</div>
+    `;
+    cardEl.onclick = () => {
+      // 上阵
+      if (slot.startsWith('bench')) {
+        // 替补无位置限制
+        card.inLineup = true;
+        lineup[slot] = card;
+      } else {
+        card.inLineup = true;
+        lineup[slot] = card;
+      }
+      saveToStorage();
+      updateUI();
+      modal.classList.add('hidden');
+    };
+    body.appendChild(cardEl);
+  });
+  
+  // 添加右键查看详情功能
+  body.querySelectorAll('.select-card-item').forEach((el, idx) => {
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const card = availableCards[idx];
+      if (card) showPlayerDetail(card);
+    });
+  });
+  
+  confirm.textContent = '取消';
+  confirm.onclick = () => modal.classList.add('hidden');
+  cancel.style.display = 'none';
+  modal.classList.remove('hidden');
+}
+
+function clearLineup() {
+  if (isInBattle) { showModal('提示', '比赛进行中，无法调整阵容'); return; }
+  
+  for (const slot of SLOTS) {
+    const card = lineup[slot];
+    if (card) {
+      card.inLineup = false;
+      lineup[slot] = null;
+    }
+  }
+  saveToStorage();
+  updateUI();
+}
+
+// ===================== 背包系统 =====================
+let backpackFilter = 'all';
+
+function filterBackpack(filter) {
+  backpackFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === filter);
+  });
+  renderBackpack();
+}
+
+function renderBackpack() {
+  const grid = document.getElementById('backpackGrid');
+  if (!grid) return;
+  
+  let filteredCards;
+  if (backpackFilter === 'all') {
+    filteredCards = backpack;
+  } else {
+    filteredCards = backpack.filter(c => {
+      const master = getMasterById(c.masterId);
+      return master && master.tier === backpackFilter;
+    });
+  }
+  
+  if (filteredCards.length === 0) {
+    grid.innerHTML = '<div class="empty-backpack">🎒 背包为空，去抽卡吧！</div>';
+    return;
+  }
+  
+  const tierColors = { GOAT:'#7c3aed', SSR:'#d97706', SR:'#2563eb', R:'#16a34a', N:'#6b7280' };
+  const tierLabels = { GOAT:'历史巨星', SSR:'传奇', SR:'史诗', R:'稀有', N:'普通' };
+  
+  grid.innerHTML = '';
+  filteredCards.forEach(card => {
+    const master = getMasterById(card.masterId);
+    if (!master) return;
+    const color = tierColors[master.tier] || '#666';
+    
+    const inLineup = isCardInLineup(card);
+    // 检查位置不适配
+    let hasMismatch = false;
+    for (const slot of SLOTS) {
+      if (lineup[slot] && lineup[slot].id === card.id && !slot.startsWith('bench')) {
+        const slotPos = slot.toUpperCase();
+        if (!master.positions.includes(slotPos)) {
+          hasMismatch = true;
+        }
+      }
+    }
+    
+    const cardEl = document.createElement('div');
+    cardEl.className = 'backpack-card';
+    if (inLineup) cardEl.classList.add('in-lineup');
+    if (hasMismatch) cardEl.classList.add('position-mismatch');
+    cardEl.style.borderColor = color;
+    
+    cardEl.innerHTML = `
+      <div class="bp-card-name" style="color:${color}">${master.name}</div>
+      <div class="bp-card-info">${master.team}</div>
+      <div class="bp-card-year">${master.year}</div>
+      <div class="bp-card-tier" style="background:${color}">${tierLabels[master.tier]}</div>
+      <div class="bp-card-ovr">总评 ${master.overall}</div>
+      ${card.stars > 0 ? `<div class="bp-card-stars">⭐${card.stars}</div>` : ''}
+      ${inLineup ? '<div class="bp-card-badge">✅已上阵</div>' : '<div class="bp-card-actions"><button class="btn btn-sm" onclick="event.stopPropagation();decomposeCard(\''+card.id+'\')">分解</button><button class="btn btn-sm" onclick="event.stopPropagation();showFusionModal(\''+card.id+'\')">融合</button></div>'}
+    `;
+    
+    cardEl.onclick = () => showPlayerDetail(card);
+    cardEl.oncontextmenu = (e) => {
+      e.preventDefault();
+      showPlayerDetail(card);
+    };
+    
+    grid.appendChild(cardEl);
+  });
+}
+
+// ===================== 球员详情弹窗（右键） =====================
+function showPlayerDetail(card) {
+  const master = getMasterById(card.masterId);
+  if (!master) return;
+  
+  const modal = document.getElementById('playerDetailModal');
+  const content = document.getElementById('detailContent');
+  
+  const tierColors = { GOAT:'#7c3aed', SSR:'#d97706', SR:'#2563eb', R:'#16a34a', N:'#6b7280' };
+  const color = tierColors[master.tier] || '#666';
+  const tierLabels = { GOAT:'历史巨星', SSR:'传奇', SR:'史诗', R:'稀有', N:'普通' };
+  
+  const attrLabels = {
+    midRangeShot: '中投', drive: '突破', post: '篮下',
+    threePointAttack: '三分', playmaking: '组织',
+    perimeterDefense: '外防', interiorDefense: '内防', rebounding: '篮板'
+  };
+  
+  let attrHTML = '';
+  const attrOrder = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding'];
+  for (const key of attrOrder) {
+    const val = master.attrs[key] || 60;
+    const starBonus = (card.stars || 0) * GameConfig.FUSION.ATTR_BONUS_PER_STAR;
+    const totalVal = val + starBonus;
+    const barW = Math.min(100, totalVal);
+    attrHTML += `<div class="detail-attr-row">
+      <span class="attr-label">${attrLabels[key]}</span>
+      <div class="attr-bar"><div class="attr-fill" style="width:${barW}%"></div></div>
+      <span class="attr-val">${totalVal}</span>
+    </div>`;
+  }
+  
+  const inLineup = isCardInLineup(card);
+  
+  content.innerHTML = `
+    <div class="detail-header" style="border-color:${color}">
+      <div class="detail-name" style="color:${color}">${master.name}</div>
+      <div class="detail-tier" style="background:${color}">${tierLabels[master.tier]}</div>
+    </div>
+    <div class="detail-info">
+      <div>🏀 ${master.positions.join('/')} | ${master.team}</div>
+      <div>📅 ${master.year}</div>
+      <div>⭐ ${card.stars || 0} 星 | ⭐ 总评 ${master.overall + (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR}</div>
+      ${inLineup ? '<div style="color:#4caf50;">✅ 已上阵</div>' : '<div style="color:#aaa;">💼 闲置背包</div>'}
+    </div>
+    <div class="detail-attrs">${attrHTML}</div>
+    ${inLineup ? '' : `<div class="detail-actions">
+      <button class="btn btn-danger" onclick="decomposeCard('${card.id}');closePlayerDetail();">分解 (${GameConfig.DECOMPOSE[master.tier]}金币)</button>
+      <button class="btn btn-primary" onclick="showFusionModal('${card.id}');closePlayerDetail();">融合升星</button>
+    </div>`}
+  `;
+  modal.classList.remove('hidden');
+}
+
+function closePlayerDetail() {
+  document.getElementById('playerDetailModal').classList.add('hidden');
+}
+
+// ===================== 分解系统 =====================
+function decomposeCard(cardId) {
+  const card = getBackpackCardById(cardId);
+  if (!card) { showModal('错误', '卡牌不存在'); return; }
+  if (isCardInLineup(card)) { showModal('提示', '已上阵球员无法分解！请先下阵'); return; }
+  
+  const master = getMasterById(card.masterId);
+  if (!master) return;
+  const reward = GameConfig.DECOMPOSE[master.tier] || 0;
+  
+  showModal('确认分解', `确定分解 ${master.name} 获得 ${reward} 金币？`, () => {
+    // 从背包移除
+    const idx = backpack.indexOf(card);
+    if (idx >= 0) backpack.splice(idx, 1);
+    addCoins(reward);
+    saveToStorage();
+    updateUI();
+    renderBackpack();
+    showModal('分解成功', `${master.name} 已分解，获得 ${reward} 金币`);
+  });
+}
+
+// ===================== 融合升星系统 =====================
+let fusionMainCardId = null;
+
+function showFusionModal(mainCardId) {
+  const mainCard = getBackpackCardById(mainCardId);
+  if (!mainCard) { showModal('错误', '主卡不存在'); return; }
+  if (isCardInLineup(mainCard)) { showModal('提示', '已上阵球员无法融合！请先下阵'); return; }
+  
+  fusionMainCardId = mainCardId;
+  const master = getMasterById(mainCard.masterId);
+  if (!master) return;
+  
+  // 获取可用的素材卡（闲置的、非主卡）
+  const materials = backpack.filter(c => c.id !== mainCardId && !isCardInLineup(c));
+  
+  const modal = document.getElementById('modal-overlay');
+  const body = document.getElementById('modal-body');
+  const title = document.getElementById('modal-title');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  const tierColors = { GOAT:'#7c3aed', SSR:'#d97706', SR:'#2563eb', R:'#16a34a', N:'#6b7280' };
+  
+  title.textContent = `⭐ 融合升星 - ${master.name}`;
+  
+  let html = `<div style="margin-bottom:10px;color:#ffd700;">主卡：${master.name} (${master.tier}) ⭐${mainCard.stars || 0}星</div>
+  <div style="margin-bottom:10px;color:#aaa;">消耗一张闲置素材卡，全属性+${GameConfig.FUSION.ATTR_BONUS_PER_STAR}，总评+${GameConfig.FUSION.OVERALL_BONUS_PER_STAR}</div>`;
+  
+  if (materials.length === 0) {
+    html += '<p style="color:#f44336;">没有可用的素材卡（闲置的背包卡牌）</p>';
+    body.innerHTML = html;
+    confirm.textContent = '知道了';
+    confirm.onclick = () => modal.classList.add('hidden');
+    cancel.style.display = 'none';
+    modal.classList.remove('hidden');
+    return;
+  }
+  
+  html += '<div class="fusion-material-list">';
+  materials.forEach(mat => {
+    const matMaster = getMasterById(mat.masterId);
+    if (!matMaster) return;
+    const color = tierColors[matMaster.tier] || '#666';
+    html += `<div class="fusion-item" data-id="${mat.id}" style="border-color:${color};cursor:pointer;" onclick="executeFusion('${mat.id}')">
+      <span style="color:${color}">${matMaster.name}</span>
+      <span style="color:#aaa;font-size:0.85em;">${matMaster.tier} | ⭐${mat.stars||0}</span>
+    </div>`;
+  });
+  html += '</div>';
+  
+  body.innerHTML = html;
+  confirm.textContent = '取消';
+  confirm.onclick = () => modal.classList.add('hidden');
+  cancel.style.display = 'none';
+  modal.classList.remove('hidden');
+}
+
+function executeFusion(materialId) {
+  if (!fusionMainCardId) return;
+  
+  const mainCard = getBackpackCardById(fusionMainCardId);
+  const materialCard = getBackpackCardById(materialId);
+  
+  if (!mainCard || !materialCard) { showModal('错误', '卡牌状态异常'); return; }
+  if (isCardInLineup(mainCard)) { showModal('提示', '主卡已上阵，无法融合'); return; }
+  if (isCardInLineup(materialCard)) { showModal('提示', '素材卡已上阵，无法使用'); return; }
+  
+  // 执行融合
+  mainCard.stars = (mainCard.stars || 0) + 1;
+  
+  // 移除素材卡
+  const idx = backpack.indexOf(materialCard);
+  if (idx >= 0) backpack.splice(idx, 1);
+  
+  saveToStorage();
+  updateUI();
+  renderBackpack();
+  
+  document.getElementById('modal-overlay').classList.add('hidden');
+  showModal('⭐ 融合成功', `${getMasterById(mainCard.masterId).name} 升星成功！当前⭐${mainCard.stars}星\n全属性+${GameConfig.FUSION.ATTR_BONUS_PER_STAR}`);
+}
+
+// ===================== 置换系统 =====================
+function showSwapModal(cardId) {
+  const card = getBackpackCardById(cardId);
+  if (!card) return;
+  if (isCardInLineup(card)) { showModal('提示', '已上阵球员无法置换！'); return; }
+  
+  const master = getMasterById(card.masterId);
+  if (!master) return;
+  
+  const cost = GameConfig.SWAP_COST[master.tier] || 0;
+  
+  showModal('球员置换', `将 ${master.name} 随机置换为同档次球员\n消耗 ${cost} 金币`, () => {
+    if (!spendCoins(cost)) return;
+    
+    // 随机选同档次其他球员
+    const pool = getMastersByTier(master.tier).filter(m => m.id !== master.id);
+    if (pool.length === 0) {
+      showModal('错误', '没有可置换的同档球员');
+      addCoins(cost);
+      return;
+    }
+    const newMaster = pool[Math.floor(Math.random() * pool.length)];
+    
+    // 更新卡牌
+    card.masterId = newMaster.id;
+    card.stars = 0;
+    
+    saveToStorage();
+    updateUI();
+    showModal('置换成功', `${master.name} → ${newMaster.name}`);
+  });
+}
+
+// ===================== 阵容完整性检查 =====================
+function isLineupComplete() {
+  const starters = ['pg','sg','sf','pf','c'];
+  const bench = ['bench1','bench2','bench3'];
+  for (const s of starters) {
+    if (!lineup[s]) return false;
+  }
+  for (const s of bench) {
+    if (!lineup[s]) return false;
+  }
+  return true;
+}
+
+function getLineupOverall() {
+  return calcLineupOverall(lineup);
+}
+
+// ===================== 对战系统 =====================
+function startBattle(difficulty) {
+  if (!isLineupComplete()) {
+    showModal('提示', '请先配置完整阵容（5首发+3替补）再开始对战！');
+    switchTab('roster');
+    return;
+  }
+  
+  currentBattleDifficulty = difficulty;
+  const config = getDifficultyConfig(difficulty);
+  if (!spendCoins(config.entryFee)) return;
+  
+  // 隐藏难度选择，显示对战
+  document.getElementById('difficultySelect').classList.add('hidden');
+  document.getElementById('battleArena').classList.remove('hidden');
+  document.getElementById('action-buttons').style.display = '';
+  
+  isInBattle = true;
+  
+  // 创建比赛阵容
+  const homeTeam = createMatchPlayersFromLineup(lineup);
+  const awayTeam = generateRandomTeam('AI ' + config.label, difficulty);
+  
+  // 处理没生成完整的情况
+  while (homeTeam.length < 8) {
+    const placeholder = createPlayer({
+      id: 'ph_' + homeTeam.length,
+      playerName: '替补球员',
+      position: ['PG','SG','SF','PF','C'][homeTeam.length % 5],
+      teamName: '主场',
+      isStarter: homeTeam.length < 5,
+      isSubstitute: homeTeam.length >= 5,
+      attrs: { midRangeShot:60, drive:60, post:60, threePointAttack:60, playmaking:60, perimeterDefense:60, interiorDefense:60, rebounding:60 }
+    });
+    homeTeam.push(placeholder);
+  }
+  while (awayTeam.length < 8) {
+    const ph = getMasterDB()[Math.floor(Math.random() * getMasterDB().length)];
+    if (ph) {
+      const cp = createPlayerFromMaster(ph.id);
+      if (cp) {
+        cp.isStarter = awayTeam.length < 5;
+        cp.isSubstitute = awayTeam.length >= 5;
+        cp.teamName = 'AI队';
+        awayTeam.push(cp);
+      }
+    } else break;
+  }
+  
+  // 初始化比赛（沿用原BattleManager）
+  battleManager = new BattleManager();
+  battleManager.initializeGame(homeTeam, awayTeam, true, difficulty === 'easy' ? Difficulty.EASY : difficulty === 'hard' ? Difficulty.HARD : Difficulty.NORMAL);
+  
+  battleManager.setCallbacks({
+    onRound: onRoundCallback,
+    onGame: onGameCallback,
+    onSubstitution: onSubstitutionCallback,
+    onTimeout: onTimeoutCallback
+  });
+  
+  renderBattleUI();
+  bindBattleEvents();
+  resetActionState();
+}
+
+function exitBattle() {
+  isInBattle = false;
+  document.getElementById('difficultySelect').classList.remove('hidden');
+  document.getElementById('battleArena').classList.add('hidden');
+  document.getElementById('action-buttons').style.display = 'none';
+}
+
+// ===================== 对战渲染（沿用原版函数） =====================
+// DOM引用
 const $ = (id) => document.getElementById(id);
 const homeScoreEl = $('home-score');
 const awayScoreEl = $('away-score');
@@ -36,44 +800,18 @@ const awayTimeoutDisplay = $('away-timeout-display');
 const homeSubstitutionDisplay = $('home-substitution-display');
 const awaySubstitutionDisplay = $('away-substitution-display');
 
-// ===================== 初始化 =====================
+let selectedAttacker = null;
+let selectedAttackType = null;
+let currentStep = 'select_attacker';
+let isProcessing = false;
 
-function initGame() {
-  console.log('initGame called');
-
-  const { home, away } = createSamplePlayers();
-  console.log('Players created:', home.length, away.length);
-
-  battleManager = new BattleManager();
-  battleManager.initializeGame(home, away, true, Difficulty.NORMAL);
-  console.log('Game initialized, possession:', battleManager.possession);
-
-  battleManager.setCallbacks({
-    onRound: onRoundCallback,
-    onGame: onGameCallback,
-    onSubstitution: onSubstitutionCallback,
-    onTimeout: onTimeoutCallback
-  });
-
+function renderBattleUI() {
   renderAll();
-  bindEvents();
-  resetActionState();
-
-  // 显示21分制信息
-  if (quarterDisplay) quarterDisplay.textContent = '🏆 先到21分获胜';
-
-  updateStatusBar('🏀 比赛开始！');
-  addLog('🏀 比赛开始！主场队获得球权');
+  updateScoreboard();
+  updateGameInfo();
   updateTimeoutsDisplay();
   updateSubstitutionsDisplay();
-  
-  // 初始化用户界面
-  if (typeof initAuthUI === 'function') {
-    initAuthUI();
-  }
 }
-
-// ===================== 渲染 =====================
 
 function renderAll() {
   renderCourtPlayers(true);
@@ -88,6 +826,7 @@ function renderCourtPlayers(isHome) {
   const container = isHome ? homePlayersEl : awayPlayersEl;
   if (!battleManager) return;
   const players = battleManager.getOnCourtPlayers(isHome);
+  if (!container) return;
   container.innerHTML = '';
   players.forEach(p => {
     container.appendChild(createPlayerCard(p, isHome, false));
@@ -98,6 +837,7 @@ function renderBenchPlayers(isHome) {
   const container = isHome ? homeBenchEl : awayBenchEl;
   if (!battleManager) return;
   const players = battleManager.getBenchPlayers(isHome);
+  if (!container) return;
   container.innerHTML = '';
   players.forEach(p => {
     container.appendChild(createPlayerCard(p, isHome, true));
@@ -108,523 +848,493 @@ function createPlayerCard(player, isHome, isBench) {
   const card = document.createElement('div');
   card.className = 'player-card';
   if (isBench) card.classList.add('bench-card');
+  if (player.isJustSubstituted && player.isOnCourt) card.classList.add('sub-bonus');
   if (player.currentStamina <= 0) card.classList.add('exhausted');
-  if (selectedAttacker === player) card.classList.add('selected');
-
+  if (selectedAttacker && selectedAttacker.id === player.id) card.classList.add('selected');
+  
   const staminaRatio = player.currentStamina / Constants.STAMINA_MAX;
+  const staminaPct = Math.max(0, Math.min(100, Math.round(staminaRatio * 100)));
   let staminaClass = 'stamina-high';
-  if (player.currentStamina <= Constants.STAMINA_THRESHOLD_2) staminaClass = 'stamina-low';
-  else if (player.currentStamina <= Constants.STAMINA_THRESHOLD_1) staminaClass = 'stamina-mid';
-
-  let badgeHTML = '';
-  if (player.badges && player.badges.length > 0) {
-    badgeHTML = player.badges.map(b => `<span class="badge-text">🔰 ${b.name}</span>`).join(' ');
-  }
-
-  let subBonusHTML = '';
-  if (player.isJustSubstituted) {
-    subBonusHTML = `<div class="sub-bonus-indicator">⚡ 替补奇兵 +${Constants.SUBSTITUTE_BONUS}</div>`;
-  }
-
-  let fatiguedHTML = '';
-  if (player.consecutiveRounds > 2) {
-    fatiguedHTML = `<div style="font-size:0.65em;color:#ff6b6b;">疲劳: +${player.consecutiveRounds * Constants.STAMINA_FATIGUE_PER_ROUND}消耗</div>`;
-  }
-
-  // 属性详情显示
-  const attrs = player.attrs || {};
-  const attrKeys = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding'];
-  const attrLabels = ['中投','突破','篮下','三分','组织','外防','内防','篮板'];
-  let attrHTML = '<div class="player-attrs">';
-  attrKeys.forEach((k, i) => {
-    attrHTML += `<span class="attr-mini">${attrLabels[i]}${attrs[k]||50}</span>`;
-  });
-  attrHTML += '</div>';
-
+  if (staminaPct <= 30) staminaClass = 'stamina-low';
+  else if (staminaPct <= 60) staminaClass = 'stamina-mid';
+  
+  const badges = player.badges && player.badges.length > 0 
+    ? `<div class="badge-text">${player.badges.map(b => b.name).join(' ')}</div>` : '';
+  
+  const subBonus = player.isJustSubstituted && player.isOnCourt 
+    ? '<div class="sub-bonus-indicator">⚡替补奇兵</div>' : '';
+  
+  const synergy = player._synergyBonus > 0 
+    ? `<div style="font-size:0.65em;color:#ff9800;">🌟+${player._synergyBonus}</div>` : '';
+  
   card.innerHTML = `
     <div class="player-name">${player.playerName}</div>
-    <div class="player-pos">${player.position} | ${player.teamName}</div>
+    <div class="player-pos">${player.position}</div>
     <div class="player-stamina">
       ${StaminaTool.getStaminaDescription(player)}
-      ${player.foulCount > 0 ? ` | 🟡犯规${player.foulCount}` : ''}
+      <div class="stamina-bar"><div class="stamina-bar-fill ${staminaClass}" style="width:${staminaPct}%"></div></div>
     </div>
-    <div class="stamina-bar">
-      <div class="stamina-bar-fill ${staminaClass}" style="width:${Math.max(0, staminaRatio * 100)}%"></div>
+    <div class="player-attrs">
+      <span class="attr-mini">🏀${player.attrs.midRangeShot || '?'}</span>
+      <span class="attr-mini">💨${player.attrs.drive || '?'}</span>
+      <span class="attr-mini">🏋️${player.attrs.post || '?'}</span>
+      <span class="attr-mini">🎯${player.attrs.threePointAttack || '?'}</span>
     </div>
-    ${attrHTML}
-    <div class="player-badges">${badgeHTML}</div>
-    ${subBonusHTML}
-    ${fatiguedHTML}
+    ${badges}${subBonus}${synergy}
   `;
-
-  card.addEventListener('click', () => {
-    if (isBench) return;
-    handlePlayerClick(player, isHome);
-  });
-
+  
+  card.onclick = () => handlePlayerClick(player, isHome);
+  card.oncontextmenu = (e) => {
+    e.preventDefault();
+    // 右键显示比赛球员信息
+  };
+  
   return card;
 }
 
 function updateScoreboard() {
   if (!battleManager) return;
-  homeScoreEl.textContent = battleManager.homeScore;
-  awayScoreEl.textContent = battleManager.awayScore;
+  if (homeScoreEl) homeScoreEl.textContent = battleManager.homeScore;
+  if (awayScoreEl) awayScoreEl.textContent = battleManager.awayScore;
 }
 
 function updateGameInfo() {
   if (!battleManager) return;
-  const summary = battleManager.getGameSummary();
-  possessionDisplay.textContent = `⚽ 球权: ${summary.possession}`;
+  if (possessionDisplay) {
+    possessionDisplay.textContent = `⚽ 球权: ${battleManager.possession === Constants.Possession.HOME ? '🏠主场' : '✈️客场'}`;
+  }
+  if (gameStatus) {
+    const diff = Math.abs(battleManager.homeScore - battleManager.awayScore);
+    gameStatus.textContent = `⚡ 第 ${battleManager.currentRound} 回合 | 分差 ${diff} 分`;
+  }
 }
 
 function updateTimeoutsDisplay() {
-  if (!battleManager) return;
-  homeTimeoutDisplay.textContent = battleManager.homeTimeouts;
-  awayTimeoutDisplay.textContent = battleManager.awayTimeouts;
-  btnTimeout.textContent = `⏸️ 暂停 (${battleManager.homeTimeouts})`;
-  btnTimeout.disabled = battleManager.homeTimeouts <= 0;
+  if (homeTimeoutDisplay) homeTimeoutDisplay.textContent = battleManager ? battleManager.homeTimeouts : 0;
+  if (awayTimeoutDisplay) awayTimeoutDisplay.textContent = battleManager ? battleManager.awayTimeouts : 0;
 }
 
 function updateSubstitutionsDisplay() {
-  if (!battleManager) return;
-  homeSubstitutionDisplay.textContent = battleManager.homeSubstitutions;
-  awaySubstitutionDisplay.textContent = battleManager.awaySubstitutions;
+  if (homeSubstitutionDisplay) homeSubstitutionDisplay.textContent = battleManager ? battleManager.homeSubstitutions : 0;
+  if (awaySubstitutionDisplay) awaySubstitutionDisplay.textContent = battleManager ? battleManager.awaySubstitutions : 0;
 }
 
-function showSubstitutionModal() {
-  if (battleManager.isGameOver()) return;
-  if (battleManager.homeSubstitutions <= 0) {
-    updateStatusBar('⚠️ 换人次数已用完！');
-    return;
-  }
-
-  const modal = $('modal-overlay');
-  const modalTitle = $('modal-title');
-  const modalBody = $('modal-body');
-  const confirmBtn = $('modal-confirm');
-  const cancelBtn = $('modal-cancel');
-
-  modalTitle.textContent = `🔄 换人（剩余 ${battleManager.homeSubstitutions} 次）`;
-  modalBody.innerHTML = '';
-
-  const homeCourt = battleManager.getOnCourtPlayers(true);
-  const homeBench = battleManager.getBenchPlayers(true);
-
-  // 为每个场上球员生成可选的替补
-  homeCourt.forEach(cp => {
-    const available = homeBench.filter(bp => bp.position === cp.position);
-    if (available.length === 0) return;
-
-    const section = document.createElement('div');
-    section.style.marginBottom = '10px';
-    section.style.padding = '8px';
-    section.style.background = 'rgba(255,255,255,0.05)';
-    section.style.borderRadius = '5px';
-
-    const label = document.createElement('div');
-    label.style.color = '#ffd700';
-    label.style.marginBottom = '4px';
-    label.textContent = `${cp.playerName} [${cp.position}] (体力:${Math.round(cp.currentStamina)})`;
-    section.appendChild(label);
-
-    available.forEach(bp => {
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.style.display = 'block';
-      btn.style.width = '100%';
-      btn.style.margin = '3px 0';
-      btn.style.padding = '8px';
-      btn.style.background = '#2a6a4a';
-      btn.style.color = '#fff';
-      btn.style.border = '1px solid #4aaa7a';
-      btn.style.borderRadius = '5px';
-      btn.style.cursor = 'pointer';
-      btn.textContent = `→ ${bp.playerName} (体力:${Math.round(bp.currentStamina)})`;
-
-      btn.addEventListener('click', () => {
-        modal.classList.add('hidden');
-
-        const result = battleManager.substitutePlayer(true, cp, bp);
-        if (result.success) {
-          addLog(`🔄 ${result.message}`);
-          updateStatusBar(result.message);
-          updateSubstitutionsDisplay();
-          renderAll();
-          setTimeout(() => {
-            if (!battleManager.isGameOver()) {
-              resetActionState();
-            }
-          }, 200);
-        } else {
-          updateStatusBar(`⚠️ ${result.message}`);
-        }
-      });
-
-      section.appendChild(btn);
-    });
-
-    modalBody.appendChild(section);
-  });
-
-  if (modalBody.children.length === 0) {
-    modalBody.innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;">没有可用的替补球员</div>';
-  }
-
-  confirmBtn.textContent = '取消';
-  cancelBtn.style.display = 'none';
-  modal.classList.remove('hidden');
-
-  confirmBtn.onclick = () => {
-    modal.classList.add('hidden');
-  };
-}
-
-function updateStatusBar(msg) {
-  gameStatus.textContent = msg;
-}
-
-// ===================== 操作流程 =====================
-
-function resetActionState() {
-  currentStep = 'select_attacker';
-  selectedAttacker = null;
-  selectedAttackType = null;
-  isProcessing = false;
-
-  if (battleManager.isGameOver()) {
-    actionTitle.textContent = '🏆 比赛已结束';
-    playerSelectEl.classList.add('hidden');
-    attackTypeSelectEl.classList.add('hidden');
-    renderAll();
-    return;
-  }
-
-  const isHomePossess = battleManager.possession === Constants.Possession.HOME;
-
-  if (isHomePossess) {
-    // 玩家的回合 → 选择进攻球员
-    actionTitle.textContent = '🎯 选择进攻球员';
-    playerSelectEl.classList.remove('hidden');
-    attackTypeSelectEl.classList.add('hidden');
-    renderAll();
-  } else {
-    // AI的回合 → 自动执行
-    actionTitle.textContent = '⚡ 对方进攻中...';
-    playerSelectEl.classList.add('hidden');
-    attackTypeSelectEl.classList.add('hidden');
-    renderAll();
-    setTimeout(() => executeAITurn(), 300);
-  }
-
-  if (battleManager.canSurrender()) {
-    btnSurrender.classList.remove('hidden');
-  } else {
-    btnSurrender.classList.add('hidden');
-  }
-}
-
+// ===================== 回合操作 =====================
 function handlePlayerClick(player, isHome) {
-  if (isProcessing || battleManager.isGameOver()) return;
-
-  const isHomePossess = battleManager.possession === Constants.Possession.HOME;
-
-  if (currentStep === 'select_attacker') {
-    if (isHome !== isHomePossess) {
-      updateStatusBar('⚠️ 现在不是你的球权！');
-      return;
-    }
-    if (!StaminaTool.canPlayerAttack(player)) {
-      updateStatusBar(`⚠️ ${player.playerName} 体力不足，无法进攻！`);
-      return;
-    }
-    selectedAttacker = player;
-    currentStep = 'select_attack_type';
-    actionTitle.textContent = `🏀 ${player.playerName} — 选择进攻方式`;
-    playerSelectEl.classList.add('hidden');
-    attackTypeSelectEl.classList.remove('hidden');
-    renderAll();
-    updateStatusBar(`选择 ${player.playerName} 的进攻方式`);
-  }
-}
-
-function handleAttackTypeSelect(attackType) {
-  if (isProcessing) return;
-
-  selectedAttackType = attackType;
-
-  if (attackType === 'assist') {
-    // 传球助攻：弹出接球者选择
-    showAssistReceiverModal();
-    return;
-  }
-
-  // 直接执行（防守球员由引擎自动选择）
-  executePlayerTurn();
-}
-
-// ===================== 传球助攻弹窗 =====================
-
-function showAssistReceiverModal() {
-  const offenseTeam = battleManager.getOffenseTeamData();
-  const receivers = offenseTeam.court.filter(p => p !== selectedAttacker && p.currentStamina > 0);
-
-  if (receivers.length === 0) {
-    updateStatusBar('⚠️ 没有可传球的队友！');
-    return;
-  }
-
-  const modal = $('modal-overlay');
-  const modalTitle = $('modal-title');
-  const modalBody = $('modal-body');
-  const confirmBtn = $('modal-confirm');
-  const cancelBtn = $('modal-cancel');
-
-  modalTitle.textContent = `🤝 ${selectedAttacker.playerName} 传球给谁？`;
-  modalBody.innerHTML = '';
-
-  receivers.forEach(r => {
-    const btn = document.createElement('button');
-    btn.className = 'btn';
-    btn.style.display = 'block';
-    btn.style.width = '100%';
-    btn.style.margin = '5px 0';
-    btn.style.padding = '10px';
-    btn.style.background = '#2a4a6a';
-    btn.style.color = '#fff';
-    btn.style.border = '1px solid #4a7aaa';
-    btn.style.borderRadius = '5px';
-    btn.style.cursor = 'pointer';
-
-    const pen = StaminaTool.getStaminaPenalty(r);
-    const mid = getEffectiveAttr(r, 'midRangeShot', pen);
-    btn.textContent = `${r.playerName} [${r.position}] 中投${mid} 体力${Math.round(r.currentStamina)}`;
-
-    btn.addEventListener('click', () => {
-      modal.classList.add('hidden');
-      isProcessing = true;
-      updateStatusBar(`🤝 ${selectedAttacker.playerName} 传给 ${r.playerName}...`);
-
-      // 防守球员由引擎自动选择
-      battleManager.executeAssistRound(selectedAttacker, r, null);
-
-      setTimeout(() => {
-        afterRound();
-      }, 300);
-    });
-
-    modalBody.appendChild(btn);
-  });
-
-  confirmBtn.textContent = '取消';
-  confirmBtn.style.display = 'inline-block';
-  cancelBtn.style.display = 'none';
-  modal.classList.remove('hidden');
-
-  confirmBtn.onclick = () => {
-    modal.classList.add('hidden');
-  };
-}
-
-// ===================== 执行回合 =====================
-
-function executePlayerTurn() {
-  isProcessing = true;
-  updateStatusBar(`⚡ ${selectedAttacker.playerName} 进攻中...`);
-
-
-  // 防守球员由引擎自动选择（传入null）
-  const result = battleManager.executeRound(
-    selectedAttacker, selectedAttackType, null
-  );
-
-
-  setTimeout(() => {
-    afterRound();
-  }, 300);
-}
-
-function executeAITurn() {
+  if (isProcessing || !battleManager || battleManager.gameOver) return;
   
-  if (battleManager.isGameOver()) return;
-
-  isProcessing = true;
-  updateStatusBar('⚡ 对方进攻中...');
-
-
-  try {
-    // AI回合也自动选防守球员（传入null）
-    const result = battleManager.executeAIRound(null);
-  } catch (e) {
-    console.error('AI turn error:', e);
-    updateStatusBar('❌ AI回合出错: ' + e.message);
-    isProcessing = false;
-    return;
+  const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
+  
+  if (isHomeOffense) {
+    // 主场进攻 - 选择进攻球员
+    handleHomeOffense(player);
+  } else {
+    // 防守 - 自动处理，选择防守球员
+    handleHomeDefense(player);
   }
-
-  setTimeout(() => {
-    afterRound();
-  }, 300);
 }
 
-function afterRound() {
-
-  if (battleManager.isGameOver()) {
-    renderAll();
-    updateScoreboard();
-    updateGameInfo();
+function handleHomeOffense(player) {
+  if (!player.isOnCourt) return;
+  if (player.currentStamina <= 0) {
+    showModal('提示', `${player.playerName} 体力耗尽，无法进攻！`);
     return;
   }
+  
+  selectedAttacker = player;
+  currentStep = 'select_attack_type';
+  actionTitle.textContent = `🎯 ${player.playerName} - 选择进攻方式`;
+  playerSelectEl.classList.add('hidden');
+  attackTypeSelectEl.classList.remove('hidden');
+  renderBattleUI();
+}
 
-  resetActionState();
-  updateStatusBar('✅ 回合结束');
-  renderAll();
+function handleHomeDefense(player) {
+  if (!player.isOnCourt) return;
+  if (player.currentStamina <= 0) {
+    showModal('提示', `${player.playerName} 体力耗尽，无法防守！`);
+    return;
+  }
+  
+  isProcessing = true;
+  // 执行AI回合
+  const result = battleManager.executeAIRound(player);
+  if (result) addLogMessage(result.message, result.type);
+  renderBattleUI();
   updateScoreboard();
   updateGameInfo();
-  updateTimeoutsDisplay();
-  updateSubstitutionsDisplay();
+  resetActionState();
+  isProcessing = false;
 }
 
-// ===================== 回调 =====================
+function executeAttack(attackType) {
+  if (!selectedAttacker || !battleManager) return;
+  
+  isProcessing = true;
+  
+  // AI自动选防守
+  const defenseTeam = battleManager.getDefenseTeamData();
+  let defender = null;
+  if (defenseTeam.court.length > 0) {
+    // 同位置优先
+    const samePos = defenseTeam.court.filter(p => p.position === selectedAttacker.position && p.currentStamina > 0);
+    if (samePos.length > 0) {
+      defender = samePos[0];
+    } else {
+      const available = defenseTeam.court.filter(p => p.currentStamina > 0);
+      if (available.length > 0) defender = available[0];
+      else defender = defenseTeam.court[0];
+    }
+  }
+  
+  if (attackType === 'assist') {
+    // 助攻需要选接球者
+    showAssistSelect(selectedAttacker, defender);
+    return;
+  }
+  
+  const result = battleManager.executeRound(selectedAttacker, attackType, defender);
+  if (result) addLogMessage(result.message, result.type);
+  
+  renderBattleUI();
+  updateScoreboard();
+  updateGameInfo();
+  resetActionState();
+  isProcessing = false;
+}
 
+function showAssistSelect(passer, initialDefender) {
+  const court = battleManager.getOnCourtPlayers(true).filter(p => p.id !== passer.id);
+  const body = document.getElementById('modal-body');
+  const title = document.getElementById('modal-title');
+  const modal = document.getElementById('modal-overlay');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  title.textContent = `🤝 ${passer.playerName} 传球给谁？`;
+  body.innerHTML = '';
+  
+  court.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'select-card-item';
+    card.style.cursor = 'pointer';
+    card.innerHTML = `<div>${p.playerName} (${p.position})</div>`;
+    card.onclick = () => {
+      isProcessing = false;
+      const result = battleManager.executeAssistRound(passer, p, initialDefender);
+      if (result) addLogMessage(result.message, result.type);
+      renderBattleUI();
+      updateScoreboard();
+      updateGameInfo();
+      resetActionState();
+      modal.classList.add('hidden');
+    };
+    body.appendChild(card);
+  });
+  
+  confirm.textContent = '取消';
+  confirm.onclick = () => { modal.classList.add('hidden'); isProcessing = false; };
+  cancel.style.display = 'none';
+  modal.classList.remove('hidden');
+}
+
+function resetActionState() {
+  selectedAttacker = null;
+  selectedAttackType = null;
+  currentStep = 'select_attacker';
+  playerSelectEl.classList.remove('hidden');
+  attackTypeSelectEl.classList.add('hidden');
+  
+  if (!battleManager || battleManager.gameOver) {
+    actionTitle.textContent = '🏁 比赛结束';
+    return;
+  }
+  
+  const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
+  if (isHomeOffense) {
+    actionTitle.textContent = '🎯 选择进攻球员';
+    // 渲染进攻球员选择
+    renderAttackerSelect();
+  } else {
+    actionTitle.textContent = '🛡️ 选择防守球员';
+    renderDefenderSelect();
+  }
+}
+
+function renderAttackerSelect() {
+  if (!battleManager) return;
+  const court = battleManager.getOnCourtPlayers(true);
+  playerSelectEl.innerHTML = '';
+  court.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-attack';
+    btn.textContent = `${p.playerName} (${p.position}) ${StaminaTool.getStaminaDescription(p)}`;
+    if (p.currentStamina <= 0) btn.disabled = true;
+    btn.onclick = () => handlePlayerClick(p, true);
+    playerSelectEl.appendChild(btn);
+  });
+}
+
+function renderDefenderSelect() {
+  if (!battleManager) return;
+  const court = battleManager.getOnCourtPlayers(true);
+  playerSelectEl.innerHTML = '';
+  court.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-timeout';
+    btn.textContent = `${p.playerName} (${p.position}) ${StaminaTool.getStaminaDescription(p)}`;
+    if (p.currentStamina <= 0) btn.disabled = true;
+    btn.onclick = () => handleHomeDefense(p);
+    playerSelectEl.appendChild(btn);
+  });
+}
+
+// ===================== 回调函数 =====================
 function onRoundCallback(result) {
-  addLog(result.message || '回合结束');
+  // 已在executeRound中处理
 }
 
 function onGameCallback(result) {
-  addLog(`🏆 ${result.message}`);
-  updateScoreboard();
-  updateGameInfo();
+  addLogMessage(`🏆 ${result.message}`, 'game_end');
+  gameStatus.textContent = `🏆 ${result.message}`;
+  actionTitle.textContent = '🏁 比赛结束';
+  playerSelectEl.innerHTML = '';
+  attackTypeSelectEl.classList.add('hidden');
+  
+  // 计算奖励
+  const isHomeWinner = result.winner === battleManager.homePlayers[0].teamName;
+  if (isHomeWinner) {
+    const rewards = { easy: GameConfig.COINS.WIN_REWARD_EASY, normal: GameConfig.COINS.WIN_REWARD_NORMAL, hard: GameConfig.COINS.WIN_REWARD_HARD };
+    const reward = rewards[currentBattleDifficulty] || GameConfig.COINS.WIN_REWARD_NORMAL;
+    addCoins(reward);
+    addLogMessage(`💰 获胜奖励 ${reward} 金币！`, 'reward');
+  }
+  
+  showModal('比赛结束', `${result.message}${isHomeWinner ? '\n💰 获得'+reward+'金币！' : ''}`);
+  
+  isInBattle = false;
+  setTimeout(() => {
+    exitBattle();
+  }, 3000);
+}
+
+function onSubstitutionCallback(side, from, to) {
   updateSubstitutionsDisplay();
-
-  const modal = $('modal-overlay');
-  const modalTitle = $('modal-title');
-  const modalBody = $('modal-body');
-  const confirmBtn = $('modal-confirm');
-  const cancelBtn = $('modal-cancel');
-
-  modalTitle.textContent = '🏆 比赛结束';
-  modalBody.innerHTML = `
-    <div style="font-size:1.5em;margin:15px 0;">
-      <span style="color:#ffd700;">${result.winner}</span>
-    </div>
-    <div style="font-size:2em;margin:10px 0;">
-      ${result.homeScore} : ${result.awayScore}
-    </div>
-    <div style="color:#aaa;font-size:0.85em;">
-      🎯 目标21分
-      ${result.bySurrender ? ' | 🏳️ 投降' : ''}
-    </div>
-  `;
-  confirmBtn.textContent = '🔄 重新开始';
-  cancelBtn.style.display = 'none';
-  modal.classList.remove('hidden');
-
-  confirmBtn.onclick = () => {
-    modal.classList.add('hidden');
-    confirmBtn.textContent = '确认';
-    cancelBtn.style.display = 'inline-block';
-    logMessages.innerHTML = '';
-    initGame();
-  };
-
-  updateStatusBar(`🏆 ${result.message}`);
 }
 
-function onSubstitutionCallback(team, fromPlayer, toPlayer) {
-  addLog(`🔄 ${team === 'home' ? '主场' : '客场'} 换人：${fromPlayer.playerName} ↓ ${toPlayer.playerName} ↑`);
-  renderAll();
-}
-
-function onTimeoutCallback(team, remaining) {
-  addLog(`⏸️ ${team === 'home' ? '主场' : '客场'} 暂停！剩余 ${remaining} 次`);
+function onTimeoutCallback(side, remaining) {
   updateTimeoutsDisplay();
 }
 
-// ===================== 日志 =====================
+// ===================== 对战操作按钮 =====================
+function bindBattleEvents() {
+  // 进攻类型按钮
+  document.querySelectorAll('.btn-attack[data-type]').forEach(btn => {
+    btn.onclick = () => executeAttack(btn.dataset.type);
+  });
+  
+  if (btnTimeout) btnTimeout.onclick = () => {
+    if (!battleManager) return;
+    const result = battleManager.useTimeout(true);
+    if (!result.success) showModal('提示', result.message);
+    else {
+      addLogMessage(result.message, 'timeout');
+      updateTimeoutsDisplay();
+      renderBattleUI();
+    }
+  };
+  
+  if (btnSubstitute) btnSubstitute.onclick = () => {
+    if (!battleManager) return;
+    showSubstituteUI();
+  };
+  
+  if (btnSurrender) btnSurrender.onclick = () => {
+    if (!battleManager) return;
+    if (!battleManager.canSurrender()) {
+      showModal('提示', '分差不够，无法投降（需落后15分以上）');
+      return;
+    }
+    showModal('确认投降', '确定要投降吗？', () => {
+      battleManager.surrender(true);
+    });
+  };
+}
 
-function addLog(msg) {
+function showSubstituteUI() {
+  if (!battleManager) return;
+  const court = battleManager.getOnCourtPlayers(true);
+  const bench = battleManager.getBenchPlayers(true);
+  
+  const body = document.getElementById('modal-body');
+  const title = document.getElementById('modal-title');
+  const modal = document.getElementById('modal-overlay');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  title.textContent = '🔄 换人（只能换同位置）';
+  body.innerHTML = '';
+  
+  court.forEach(cp => {
+    const samePosBench = bench.filter(bp => bp.position === cp.position);
+    if (samePosBench.length === 0) {
+      const row = document.createElement('div');
+      row.className = 'sub-row';
+      row.innerHTML = `<span>${cp.playerName} (${cp.position})</span><span style="color:#888;">无可换替补</span>`;
+      body.appendChild(row);
+    } else {
+      samePosBench.forEach(bp => {
+        const row = document.createElement('div');
+        row.className = 'sub-row';
+        row.innerHTML = `<span>${cp.playerName} (${cp.position}) ⬇️</span><span>${bp.playerName} (${bp.position}) ⬆️</span>`;
+        row.style.cursor = 'pointer';
+        row.onclick = () => {
+          const result = battleManager.substitutePlayer(true, cp, bp);
+          if (!result.success) showModal('提示', result.message);
+          else {
+            addLogMessage(result.message, 'sub');
+            renderBattleUI();
+            updateSubstitutionsDisplay();
+          }
+          modal.classList.add('hidden');
+        };
+        body.appendChild(row);
+      });
+    }
+  });
+  
+  confirm.textContent = '关闭';
+  confirm.onclick = () => modal.classList.add('hidden');
+  cancel.style.display = 'none';
+  modal.classList.remove('hidden');
+}
+
+// ===================== 日志系统 =====================
+function addLogMessage(message, type) {
+  if (!logMessages) return;
   const entry = document.createElement('div');
   entry.className = 'log-entry';
-  entry.textContent = msg;
+  const timestamp = battleManager ? `[${battleManager.currentRound}] ` : '[0] ';
+  entry.textContent = timestamp + message;
   logMessages.appendChild(entry);
   logMessages.scrollTop = logMessages.scrollHeight;
 }
 
-// ===================== 事件绑定 =====================
-
-function bindEvents() {
-  attackTypeSelectEl.querySelectorAll('.btn-attack').forEach(btn => {
-    btn.addEventListener('click', () => {
-      handleAttackTypeSelect(btn.dataset.type);
-    });
-  });
-
-  btnTimeout.addEventListener('click', () => {
-    if (battleManager.isGameOver()) return;
-    const result = battleManager.useTimeout(true);
-    if (result.success) {
-      addLog(`⏸️ ${result.message}`);
-      updateStatusBar(result.message);
-      updateTimeoutsDisplay();
-      renderAll();
-      setTimeout(() => {
-        if (!battleManager.isGameOver()) {
-          resetActionState();
-        }
-      }, 200);
-    } else {
-      updateStatusBar(`⚠️ ${result.message}`);
-    }
-  });
-
-  btnSubstitute.addEventListener('click', () => {
-    showSubstitutionModal();
-  });
+// ===================== 弹窗系统 =====================
+function showModal(title, message, onConfirm) {
+  const modal = document.getElementById('modal-overlay');
+  const titleEl = document.getElementById('modal-title');
+  const bodyEl = document.getElementById('modal-body');
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
   
-  const btnOnline = $('btn-online');
-  if (btnOnline) {
-    btnOnline.addEventListener('click', () => {
-      if (typeof showOnlineMenu === 'function') {
-        showOnlineMenu();
-      }
-    });
+  titleEl.textContent = title;
+  bodyEl.innerHTML = message.replace(/\n/g, '<br>');
+  
+  confirmBtn.onclick = () => {
+    modal.classList.add('hidden');
+    if (onConfirm) onConfirm();
+  };
+  cancelBtn.style.display = 'inline-block';
+  cancelBtn.onclick = () => modal.classList.add('hidden');
+  modal.classList.remove('hidden');
+}
+
+// ===================== 标签页切换 =====================
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  
+  const page = document.getElementById('tab-' + tab);
+  const btn = document.querySelector(`.tab-btn[onclick*="${tab}"]`);
+  if (page) page.classList.add('active');
+  if (btn) btn.classList.add('active');
+  
+  if (tab === 'roster') {
+    renderBackpack();
+    document.querySelector('.filter-btn[data-filter="all"]')?.classList.add('active');
   }
+  if (tab === 'home') updateHomeStats();
+}
 
-  btnSurrender.addEventListener('click', () => {
-    if (battleManager.canSurrender()) {
-      const modal = $('modal-overlay');
-      const modalTitle = $('modal-title');
-      const modalBody = $('modal-body');
-      const confirmBtn = $('modal-confirm');
-      const cancelBtn = $('modal-cancel');
+// ===================== 首页统计 =====================
+function updateHomeStats() {
+  const homeOverall = document.getElementById('homeOverall');
+  const homeCardCount = document.getElementById('homeCardCount');
+  if (homeOverall) homeOverall.textContent = getLineupOverall();
+  if (homeCardCount) homeCardCount.textContent = backpack.length;
+}
 
-      modalTitle.textContent = '🏳️ 确认投降？';
-      modalBody.textContent = `当前比分 ${battleManager.homeScore} : ${battleManager.awayScore}，确定要投降吗？`;
-      confirmBtn.textContent = '确认投降';
-      cancelBtn.textContent = '取消';
-      cancelBtn.style.display = 'inline-block';
-      modal.classList.remove('hidden');
-
-      confirmBtn.onclick = () => {
-        modal.classList.add('hidden');
-        battleManager.surrender(true);
-      };
-      cancelBtn.onclick = () => {
-        modal.classList.add('hidden');
-      };
+// ===================== UI刷新 =====================
+function updateUI() {
+  updateCoinDisplay();
+  updateHomeStats();
+  updateLineupDisplay();
+  renderBackpack();
+  
+  // 更新阵容槽
+  for (const slot of SLOTS) {
+    const el = document.getElementById('slot-' + slot);
+    const ovrEl = document.getElementById('slot-ovr-' + slot);
+    if (el) {
+      const card = lineup[slot];
+      if (card) {
+        const master = getMasterById(card.masterId);
+        if (master) {
+          const slotPos = slot.toUpperCase();
+          const isMismatch = !slot.startsWith('bench') && !master.positions.includes(slotPos);
+          el.textContent = master.name + (card.stars > 0 ? ' ⭐'.repeat(card.stars) : '');
+          if (ovrEl) ovrEl.textContent = master.overall + (card.stars||0) * 2;
+          el.style.color = isMismatch ? '#f44336' : '';
+          el.style.fontWeight = isMismatch ? 'bold' : '';
+        } else {
+          el.textContent = '未知球员';
+        }
+      } else {
+        el.textContent = '空位';
+        el.style.color = '';
+        el.style.fontWeight = '';
+        if (ovrEl) ovrEl.textContent = '';
+      }
     }
-  });
+  }
+  
+  // 更新阵容总评标记
+  const overall = document.getElementById('homeOverall');
+  if (overall) overall.textContent = getLineupOverall();
+  
+  // 更新对战页面状态
+  const battleStatus = document.getElementById('battleStatus');
+  if (battleStatus) {
+    if (isLineupComplete()) {
+      battleStatus.textContent = '✅ 阵容已配置完毕，选择难度开始对战！';
+      battleStatus.style.color = '#4caf50';
+      document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'auto');
+    } else {
+      battleStatus.textContent = '⚠️ 请先配置完整阵容（5首发+3替补）';
+      battleStatus.style.color = '#f44336';
+      document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'none');
+    }
+  }
+}
+
+function updateLineupDisplay() {
+  // 阵容槽在updateUI中已处理
+}
+
+// ===================== 键盘快捷键 =====================
+function bindEvents() {
+  // 避免重新绑定
 }
 
 // ===================== 启动 =====================
-
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('DOM ready, starting game...');
-  try {
-    initGame();
-    console.log('Game started successfully');
-  } catch (e) {
-    console.error('Error starting game:', e);
-    gameStatus.textContent = '❌ 启动失败: ' + e.message;
+  console.log('NBA卡牌对战系统加载中...');
+  // 确保Constants已加载
+  if (typeof Constants === 'undefined') {
+    console.error('Constants未加载！');
+    return;
   }
+  initGame();
 });

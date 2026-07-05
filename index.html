@@ -3,113 +3,324 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NBA卡牌对战 - 核心逻辑</title>
+  <title>NBA卡牌对战</title>
   <link rel="stylesheet" href="styles/main.css">
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
-  <div id="app">
-    <!-- 顶部信息栏 -->
-    <header id="game-header">
-      <div id="scoreboard">
-        <div class="team-score" id="home-score-display">
-          <span class="team-label" id="home-label">🏠 主场 (勇士)</span>
-          <span class="score-value" id="home-score">0</span>
+<div id="app">
+  <!-- ====== 顶部导航栏 ====== -->
+  <header id="top-bar">
+    <div id="logo">🏀 NBA卡牌对战</div>
+    <div id="coin-display">💰 <span id="coinCount">0</span></div>
+    <div id="user-area">
+      <span id="loginStatus">未登录</span>
+      <button id="btnAuth" class="btn btn-small" onclick="handleAuth()">登录</button>
+    </div>
+  </header>
+
+  <!-- ====== 标签页导航 ====== -->
+  <nav id="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('home')">🏠 首页</button>
+    <button class="tab-btn" onclick="switchTab('pack')">🎴 抽卡</button>
+    <button class="tab-btn" onclick="switchTab('roster')">📋 阵容</button>
+    <button class="tab-btn" onclick="switchTab('battle')">⚔️ 对战</button>
+  </nav>
+
+  <!-- ====== 首页 ====== -->
+  <div id="tab-home" class="tab-page active">
+    <div class="home-stats">
+      <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-value"><span id="homeCoins">0</span></div>
+        <div class="stat-label">总金币</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-value"><span id="homeOverall">0</span></div>
+        <div class="stat-label">阵容总评</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🎴</div>
+        <div class="stat-value"><span id="homeCardCount">0</span></div>
+        <div class="stat-label">背包卡牌</div>
+      </div>
+    </div>
+    <div class="quick-actions">
+      <h3>快捷入口</h3>
+      <div class="action-grid">
+        <button class="action-btn" onclick="switchTab('pack')">🎴 抽卡</button>
+        <button class="action-btn" onclick="switchTab('roster')">📋 管理阵容</button>
+        <button class="action-btn" onclick="switchTab('battle')">⚔️ 开始对战</button>
+      </div>
+    </div>
+    <!-- 比赛日志（保留原有日志） -->
+    <div id="home-match-log" class="log-section" style="display:none;">
+      <h3>📜 历史比赛记录</h3>
+      <div id="home-log-list"></div>
+    </div>
+  </div>
+
+  <!-- ====== 抽卡页面 ====== -->
+  <div id="tab-pack" class="tab-page">
+    <div class="pack-section">
+      <h2>🎴 卡包商店</h2>
+      <div class="pack-grid">
+        <div class="pack-card" onclick="buyPack('basic')">
+          <div class="pack-title">📦 初级基础卡包</div>
+          <div class="pack-price">💰 150 金币</div>
+          <div class="pack-rate">
+            N 63% | R 28% | SR 6% | SSR 2% | 🌟GOAT 1%
+          </div>
         </div>
-        <div id="game-info">
-          <span id="quarter-display" style="color:#ffd700;font-weight:bold;">🏆 先到21分获胜</span>
-          <span id="possession-display">⚽ 球权: 主场</span>
+        <div class="pack-card mid" onclick="buyPack('mid')">
+          <div class="pack-title">📦 中级精英卡包</div>
+          <div class="pack-price">💰 600 金币</div>
+          <div class="pack-rate">
+            N 15% | R 35% | SR 32% | SSR 15% | 🌟GOAT 3%
+          </div>
         </div>
-        <div class="team-score" id="away-score-display">
-          <span class="score-value" id="away-score">0</span>
-          <span class="team-label" id="away-label">客场 (湖人) ✈️</span>
+        <div class="pack-card premium" onclick="buyPack('premium')">
+          <div class="pack-title">📦 高级巨星卡包</div>
+          <div class="pack-price">💰 2000 金币</div>
+          <div class="pack-rate">
+            N 5% | R 15% | SR 33% | SSR 40% | 🌟GOAT 7%
+          </div>
         </div>
       </div>
-      <div id="game-status" class="status-bar">⚡ 点击球员开始选秀，跳球决定球权</div>
-    </header>
+    </div>
 
-    <!-- 主战区域 -->
-    <main id="battle-area">
-      <!-- 主场阵容 -->
-      <section id="home-court" class="court-section">
-        <h3>🏠 主场 - 场上阵容</h3>
-        <div id="home-players" class="player-row"></div>
-        <div class="bench-section">
-          <h4>🪑 替补席</h4>
-          <div id="home-bench" class="player-row"></div>
-        </div>
-        <div class="bench-section">
-          <h4>⏱️ 暂停: <span id="home-timeout-display">2</span> 次 | 🔄 换人: <span id="home-substitution-display">3</span> 次</h4>
-        </div>
-      </section>
-
-      <!-- 中间操作区 -->
-      <section id="action-area">
-        <div id="action-panel">
-          <h3 id="action-title">🎯 选择进攻球员</h3>
-          <!-- 进攻球员选择 -->
-          <div id="player-select" class="select-row"></div>
-          <!-- 进攻类型选择 -->
-          <div id="attack-type-select" class="select-row hidden">
-            <button class="btn btn-attack" data-type="mid_range">🎯 中投</button>
-            <button class="btn btn-attack" data-type="drive">💨 突破</button>
-            <button class="btn btn-attack" data-type="post">🏋️ 篮下</button>
-            <button class="btn btn-attack" data-type="three_point">🎯 三分投射</button>
-            <button class="btn btn-attack" data-type="assist">🤝 传球助攻</button>
+    <!-- 抽卡弹窗动画 -->
+    <div id="packResultModal" class="modal-overlay hidden" onclick="if(event.target===this)closePackResult()">
+      <div class="modal-content pack-modal" id="packModalContent">
+        <div id="packAnimationArea">
+          <div id="packOpening" class="pack-opening hidden">
+            <div class="pack-shake">🎴</div>
+            <div class="pack-loading">开包中...</div>
           </div>
-
-          <!-- 操作按钮 -->
-          <div id="action-buttons" class="select-row">
-            <button id="btn-timeout" class="btn btn-timeout">⏸️ 暂停</button>
-            <button id="btn-substitute" class="btn btn-substitute">🔄 换人</button>
-            <button id="btn-online" class="btn" style="background:#5a3a7a;color:#fff;">🎮 联机</button>
-            <button id="btn-surrender" class="btn btn-surrender hidden">🏳️ 投降</button>
+          <div id="packResult" class="pack-result hidden">
+            <div id="packRarityEffect" class="rarity-effect"></div>
+            <div id="packCardDisplay" class="pack-card-display"></div>
+            <button class="btn btn-confirm" onclick="closePackResult()">确认</button>
           </div>
         </div>
-        <div id="round-log" class="log-area">
-          <h4>📜 回合日志</h4>
-          <div id="log-messages"></div>
-        </div>
-      </section>
+      </div>
+    </div>
 
-      <!-- 客场阵容 -->
-      <section id="away-court" class="court-section">
-        <h3>✈️ 客场 - 场上阵容</h3>
-        <div id="away-players" class="player-row"></div>
-        <div class="bench-section">
-          <h4>🪑 替补席</h4>
-          <div id="away-bench" class="player-row"></div>
-        </div>
-        <div class="bench-section">
-          <h4>⏱️ 暂停: <span id="away-timeout-display">2</span> 次 | 🔄 换人: <span id="away-substitution-display">3</span> 次</h4>
-        </div>
-      </section>
-    </main>
-
-    <!-- 弹窗 -->
-    <div id="modal-overlay" class="hidden">
-      <div id="modal-content">
-        <h3 id="modal-title"></h3>
-        <div id="modal-body"></div>
-        <div id="modal-footer">
-          <button id="modal-confirm" class="btn btn-primary">确认</button>
-          <button id="modal-cancel" class="btn btn-secondary">取消</button>
-        </div>
+    <!-- 免费卡包弹窗 -->
+    <div id="freePackModal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <h2>🎁 开局福利</h2>
+        <p>欢迎来到NBA卡牌对战！系统赠送您 <strong>10个初级基础卡包</strong>！</p>
+        <p style="margin:10px 0;color:#ffd700;">点击下方按钮连续开启！</p>
+        <button class="btn btn-confirm" onclick="claimFreePacks()" style="font-size:1.2em;padding:12px 40px;">
+          🎴 全部开启！
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- 脚本加载顺序 -->
-  <script src="js/tools/Constants.js"></script>
-  <script src="js/tools/StaminaTool.js"></script>
-  <script src="js/tools/ProbabilityTool.js"></script>
-  <script src="js/data/PlayerData.js"></script>
-  <script src="js/data/TeamData.js"></script>
-  <script src="js/battle/AIOpponent.js"></script>
-  <script src="js/battle/BattleManager.js"></script>
-  <script src="js/auth-ui.js"></script>
-  <script src="js/main.js"></script>
+  <!-- ====== 阵容&背包页面 ====== -->
+  <div id="tab-roster" class="tab-page">
+    <div class="roster-layout">
+      <!-- 左侧阵容 -->
+      <div class="roster-left">
+        <h2>📋 阵容配置</h2>
+        <div class="team-slot-list" id="teamSlots">
+          <div class="slot-item" data-pos="pg" onclick="slotClick('pg')">
+            <span class="slot-pos">PG</span>
+            <span class="slot-player" id="slot-pg">空位</span>
+            <span class="slot-ovr" id="slot-ovr-pg"></span>
+          </div>
+          <div class="slot-item" data-pos="sg" onclick="slotClick('sg')">
+            <span class="slot-pos">SG</span>
+            <span class="slot-player" id="slot-sg">空位</span>
+            <span class="slot-ovr" id="slot-ovr-sg"></span>
+          </div>
+          <div class="slot-item" data-pos="sf" onclick="slotClick('sf')">
+            <span class="slot-pos">SF</span>
+            <span class="slot-player" id="slot-sf">空位</span>
+            <span class="slot-ovr" id="slot-ovr-sf"></span>
+          </div>
+          <div class="slot-item" data-pos="pf" onclick="slotClick('pf')">
+            <span class="slot-pos">PF</span>
+            <span class="slot-player" id="slot-pf">空位</span>
+            <span class="slot-ovr" id="slot-ovr-pf"></span>
+          </div>
+          <div class="slot-item" data-pos="c" onclick="slotClick('c')">
+            <span class="slot-pos">C</span>
+            <span class="slot-player" id="slot-c">空位</span>
+            <span class="slot-ovr" id="slot-ovr-c"></span>
+          </div>
+          <div class="slot-divider">🪑 替补席</div>
+          <div class="slot-item bench" data-pos="bench1" onclick="slotClick('bench1')">
+            <span class="slot-pos">替补1</span>
+            <span class="slot-player" id="slot-bench1">空位</span>
+          </div>
+          <div class="slot-item bench" data-pos="bench2" onclick="slotClick('bench2')">
+            <span class="slot-pos">替补2</span>
+            <span class="slot-player" id="slot-bench2">空位</span>
+          </div>
+          <div class="slot-item bench" data-pos="bench3" onclick="slotClick('bench3')">
+            <span class="slot-pos">替补3</span>
+            <span class="slot-player" id="slot-bench3">空位</span>
+          </div>
+        </div>
+        <div class="roster-actions">
+          <button class="btn btn-danger" onclick="clearLineup()">🗑️ 清空阵容</button>
+        </div>
+      </div>
+
+      <!-- 右侧背包 -->
+      <div class="roster-right">
+        <div class="backpack-header">
+          <h2>🎒 背包</h2>
+          <div class="backpack-filter">
+            <button class="btn btn-small filter-btn active" onclick="filterBackpack('all')" data-filter="all">全部</button>
+            <button class="btn btn-small filter-btn" onclick="filterBackpack('GOAT')" data-filter="GOAT">GOAT</button>
+            <button class="btn btn-small filter-btn" onclick="filterBackpack('SSR')" data-filter="SSR">SSR</button>
+            <button class="btn btn-small filter-btn" onclick="filterBackpack('SR')" data-filter="SR">SR</button>
+            <button class="btn btn-small filter-btn" onclick="filterBackpack('R')" data-filter="R">R</button>
+            <button class="btn btn-small filter-btn" onclick="filterBackpack('N')" data-filter="N">N</button>
+          </div>
+        </div>
+        <div id="backpackGrid" class="backpack-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 对战页面 ====== -->
+  <div id="tab-battle" class="tab-page">
+    <div id="battle-main">
+      <!-- 难度选择 -->
+      <div id="difficultySelect" class="battle-select">
+        <h2>⚔️ 选择对战难度</h2>
+        <p id="battleStatus" class="battle-status">请先配置完整阵容（5首发+3替补）</p>
+        <div class="difficulty-grid">
+          <div class="difficulty-card" onclick="startBattle('easy')" id="diffEasy">
+            <div class="diff-title">🟢 简单</div>
+            <div class="diff-fee">入场费：50金币</div>
+            <div class="diff-reward">获胜奖励：100金币</div>
+          </div>
+          <div class="difficulty-card" onclick="startBattle('normal')" id="diffNormal">
+            <div class="diff-title">🟡 中等</div>
+            <div class="diff-fee">入场费：150金币</div>
+            <div class="diff-reward">获胜奖励：300金币</div>
+          </div>
+          <div class="difficulty-card" onclick="startBattle('hard')" id="diffHard">
+            <div class="diff-title">🔴 困难</div>
+            <div class="diff-fee">入场费：300金币</div>
+            <div class="diff-reward">获胜奖励：600金币</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 比赛区域（原始对战UI） -->
+      <div id="battleArena" class="hidden">
+        <header id="game-header">
+          <div id="scoreboard">
+            <div class="team-score" id="home-score-display">
+              <span class="team-label" id="home-label">🏠 主场</span>
+              <span class="score-value" id="home-score">0</span>
+            </div>
+            <div id="game-info">
+              <span id="quarter-display" style="color:#ffd700;font-weight:bold;">🏆 先到21分获胜</span>
+              <span id="possession-display">⚽ 球权: 主场</span>
+            </div>
+            <div class="team-score" id="away-score-display">
+              <span class="score-value" id="away-score">0</span>
+              <span class="team-label" id="away-label">✈️ 客场</span>
+            </div>
+          </div>
+          <div id="game-status" class="status-bar">⚡ 比赛进行中...</div>
+        </header>
+
+        <main id="battle-area">
+          <section id="home-court" class="court-section">
+            <h3>🏠 主场 - 场上阵容</h3>
+            <div id="home-players" class="player-row"></div>
+            <div class="bench-section">
+              <h4>🪑 替补席</h4>
+              <div id="home-bench" class="player-row"></div>
+            </div>
+            <div class="bench-section">
+              <h4>⏱️ 暂停: <span id="home-timeout-display">2</span> | 换人: <span id="home-substitution-display">3</span></h4>
+            </div>
+          </section>
+
+          <section id="action-area">
+            <div id="action-panel">
+              <h3 id="action-title">🎯 选择进攻球员</h3>
+              <div id="player-select" class="select-row"></div>
+              <div id="attack-type-select" class="select-row hidden">
+                <button class="btn btn-attack" data-type="mid_range">🎯 中投</button>
+                <button class="btn btn-attack" data-type="drive">💨 突破</button>
+                <button class="btn btn-attack" data-type="post">🏋️ 篮下</button>
+                <button class="btn btn-attack" data-type="three_point">🎯 三分</button>
+                <button class="btn btn-attack" data-type="assist">🤝 助攻</button>
+              </div>
+              <div id="action-buttons" class="select-row" style="display:none;">
+                <button id="btn-timeout" class="btn btn-timeout">⏸️ 暂停</button>
+                <button id="btn-substitute" class="btn btn-substitute">🔄 换人</button>
+                <button id="btn-surrender" class="btn btn-surrender hidden">🏳️ 投降</button>
+                <button class="btn btn-danger" onclick="exitBattle()">🚪 退出</button>
+              </div>
+            </div>
+            <div id="round-log" class="log-area">
+              <h4>📜 回合日志</h4>
+              <div id="log-messages"></div>
+            </div>
+          </section>
+
+          <section id="away-court" class="court-section">
+            <h3>✈️ 客场 - 场上阵容</h3>
+            <div id="away-players" class="player-row"></div>
+            <div class="bench-section">
+              <h4>🪑 替补席</h4>
+              <div id="away-bench" class="player-row"></div>
+            </div>
+            <div class="bench-section">
+              <h4>⏱️ 暂停: <span id="away-timeout-display">2</span> | 换人: <span id="away-substitution-display">3</span></h4>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 通用弹窗 ====== -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-content" class="modal-content">
+      <h3 id="modal-title"></h3>
+      <div id="modal-body"></div>
+      <div id="modal-footer">
+        <button id="modal-confirm" class="btn btn-confirm">确认</button>
+        <button id="modal-cancel" class="btn btn-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右键详情弹窗 -->
+  <div id="playerDetailModal" class="modal-overlay hidden" onclick="if(event.target===this)closePlayerDetail()">
+    <div class="modal-content detail-modal">
+      <div id="detailContent"></div>
+      <button class="btn btn-confirm" onclick="closePlayerDetail()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ====== 脚本加载 ====== -->
+<script src="js/tools/Constants.js"></script>
+<script src="js/tools/StaminaTool.js"></script>
+<script src="js/tools/ProbabilityTool.js"></script>
+<script src="js/data/GameConfig.js"></script>
+<script src="js/data/PlayerData.js"></script>
+<script src="js/data/TeamData.js"></script>
+<script src="js/battle/AIOpponent.js"></script>
+<script src="js/battle/BattleManager.js"></script>
+<script src="js/auth-ui.js"></script>
+<script src="js/main.js"></script>
 </body>
 </html>

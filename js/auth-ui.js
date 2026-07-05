@@ -1,6 +1,6 @@
 /**
- * auth-ui.js — Firebase 登录 + 存档 + 联机（兼容版）
- * 使用 firebase-compat SDK
+ * auth-ui.js — Firebase 登录 + 存档 + 联机（适配新UI）
+ * 新UI顶部有 #user-area (登录状态 + 按钮)
  */
 
 const firebaseConfig = {
@@ -9,13 +9,22 @@ const firebaseConfig = {
   projectId: "nba-card-game",
   storageBucket: "nba-card-game.firebasestorage.app",
   messagingSenderId: "614710872766",
-  appId: "1:614710872766:web:a86d11643c5679f8c0ecef",
-  measurementId: "G-32PFCZSVVP"
+  appId: "1:614710872766:web:a86d11643c5679f8c0ecef"
 };
 
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+// 安全地初始化Firebase（防止重复）
+let firebaseInitialized = false;
+try {
+  if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+  }
+  firebaseInitialized = true;
+} catch(e) {
+  console.warn('Firebase初始化失败:', e);
+}
+
+const auth = firebaseInitialized ? firebase.auth() : null;
+const fdb = firebaseInitialized ? firebase.firestore() : null;
 
 let currentUser = null;
 let currentRoomId = null;
@@ -24,6 +33,12 @@ let isHostPlayer = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
+  if (!auth) {
+    document.getElementById('loginStatus').textContent = '离线模式';
+    document.getElementById('btnAuth').textContent = '登录';
+    document.getElementById('btnAuth').onclick = () => alert('Firebase未初始化，请在online模式下使用');
+    return;
+  }
   auth.onAuthStateChanged((user) => {
     currentUser = user;
     if (user) {
@@ -35,366 +50,188 @@ function initAuthUI() {
 }
 
 function showUserInfo(user) {
-  const header = document.querySelector('#game-header');
-  if (!header) return;
-  
-  const oldBar = document.getElementById('user-bar');
-  if (oldBar) oldBar.remove();
+  const statusEl = document.getElementById('loginStatus');
+  const btnEl = document.getElementById('btnAuth');
+  if (!statusEl || !btnEl) return;
   
   const name = user.email?.split('@')[0] || '用户';
+  statusEl.textContent = `👤 ${name}`;
+  btnEl.textContent = '登出';
+  btnEl.onclick = () => {
+    if (auth) auth.signOut();
+  };
   
-  const bar = document.createElement('div');
-  bar.id = 'user-bar';
-  bar.style.cssText = `
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 6px 10px; margin-bottom: 8px;
-    background: rgba(255,215,0,0.08); border-radius: 6px;
-    font-size: 0.8em;
-  `;
-  
-  bar.innerHTML = `
-    <span>👤 ${name}</span>
-    <span>
-      <button class="btn" style="background:#2a5a6a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-save-game">💾 存档</button>
-      <button class="btn" style="background:#5a3a7a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-load-game">📂 读档</button>
-      <button class="btn" style="background:#5a2a3a;color:#fff;padding:4px 10px;font-size:0.85em;" id="btn-logout">🚪 退出</button>
-    </span>
-  `;
-  
-  header.insertBefore(bar, header.firstChild);
-  
-  document.getElementById('btn-save-game').addEventListener('click', saveGame);
-  document.getElementById('btn-load-game').addEventListener('click', loadGame);
-  document.getElementById('btn-logout').addEventListener('click', logout);
+  // 添加联机按钮
+  const userArea = document.getElementById('user-area');
+  if (userArea && !document.getElementById('btn-online')) {
+    const onlineBtn = document.createElement('button');
+    onlineBtn.id = 'btn-online';
+    onlineBtn.className = 'btn btn-small';
+    onlineBtn.textContent = '🌐 联机';
+    onlineBtn.style.marginLeft = '8px';
+    onlineBtn.onclick = showOnlineMenu;
+    userArea.appendChild(onlineBtn);
+  }
 }
 
 function showLoginPrompt() {
-  const header = document.querySelector('#game-header');
-  if (!header) return;
-  
-  const oldBar = document.getElementById('user-bar');
-  if (oldBar) oldBar.remove();
-  
-  const bar = document.createElement('div');
-  bar.id = 'user-bar';
-  bar.style.cssText = `
-    display: flex; justify-content: center; align-items: center;
-    padding: 6px 10px; margin-bottom: 8px;
-    background: rgba(255,255,255,0.04); border-radius: 6px;
-    font-size: 0.8em;
-  `;
-  
-  bar.innerHTML = `
-    <span style="color:#888;">未登录</span>
-    <a href="login.html" style="color:#ffd700;margin-left:10px;text-decoration:none;">🔑 登录</a>
-  `;
-  
-  header.insertBefore(bar, header.firstChild);
+  const statusEl = document.getElementById('loginStatus');
+  const btnEl = document.getElementById('btnAuth');
+  if (!statusEl || !btnEl) return;
+  statusEl.textContent = '未登录';
+  btnEl.textContent = '登录';
+  btnEl.onclick = handleAuth;
 }
 
-// ===================== 存档/读档 =====================
+// 登录（重定向到login.html）
+function handleAuth() {
+  if (auth && auth.currentUser) {
+    auth.signOut();
+    return;
+  }
+  window.location.href = 'login.html';
+}
+
+// ===================== 存档系统 =====================
 async function saveGame() {
-  if (!currentUser || !battleManager) return;
+  if (!auth || !auth.currentUser) { showModal('提示', '请先登录'); return; }
   
   const gameData = {
-    homePlayers: battleManager.homePlayers.map(p => ({
-      playerName: p.playerName, position: p.position, teamName: p.teamName,
-      attrs: p.attrs, badges: p.badges,
-      currentStamina: p.currentStamina, foulCount: p.foulCount,
-      isOnCourt: p.isOnCourt, isStarter: p.isStarter,
-      consecutiveRounds: p.consecutiveRounds, totalPointsScored: p.totalPointsScored,
-      totalAssists: p.totalAssists, totalRebounds: p.totalRebounds
-    })),
-    awayPlayers: battleManager.awayPlayers.map(p => ({
-      playerName: p.playerName, position: p.position, teamName: p.teamName,
-      attrs: p.attrs, badges: p.badges,
-      currentStamina: p.currentStamina, foulCount: p.foulCount,
-      isOnCourt: p.isOnCourt, isStarter: p.isStarter,
-      consecutiveRounds: p.consecutiveRounds, totalPointsScored: p.totalPointsScored,
-      totalAssists: p.totalAssists, totalRebounds: p.totalRebounds
-    })),
-    homeScore: battleManager.homeScore,
-    awayScore: battleManager.awayScore,
-    currentRound: battleManager.currentRound,
-    possession: battleManager.possession,
-    homeTimeouts: battleManager.homeTimeouts,
-    awayTimeouts: battleManager.awayTimeouts,
-    homeSubstitutions: battleManager.homeSubstitutions,
-    awaySubstitutions: battleManager.awaySubstitutions,
-    gameOver: battleManager.gameOver,
-    gameWinner: battleManager.gameWinner
+    coins: coins,
+    backpack: backpack.map(c => ({ id: c.id, masterId: c.masterId, stars: c.stars || 0, inLineup: c.inLineup || false })),
+    lineup: SLOTS.reduce((acc, slot) => { acc[slot] = lineup[slot] ? lineup[slot].id : null; return acc; }, {})
   };
   
   try {
-    await db.collection('saves').doc(currentUser.uid).set({
-      gameData,
-      updatedAt: new Date().toISOString()
-    });
-    updateStatusBar('💾 存档成功！');
-    addLog('💾 游戏已保存到云端');
-  } catch (e) {
-    updateStatusBar('⚠️ 存档失败: ' + e.message);
+    await fdb.collection('saves').doc(auth.currentUser.uid).set({ gameData, updatedAt: new Date() });
+    showModal('保存成功', '游戏数据已保存到云端');
+  } catch(e) {
+    showModal('保存失败', e.message);
   }
 }
 
 async function loadGame() {
-  if (!currentUser || !battleManager) return;
+  if (!auth || !auth.currentUser) { showModal('提示', '请先登录'); return; }
   
   try {
-    const docSnap = await db.collection('saves').doc(currentUser.uid).get();
-    
-    if (!docSnap.exists) {
-      updateStatusBar('⚠️ 没有找到存档');
-      return;
-    }
+    const docSnap = await fdb.collection('saves').doc(auth.currentUser.uid).get();
+    if (!docSnap.exists) { showModal('加载失败', '没有找到存档'); return; }
     
     const gd = docSnap.data().gameData;
+    coins = gd.coins || 0;
+    backpack = (gd.backpack || []).map(c => ({ id: c.id, masterId: c.masterId, stars: c.stars || 0, inLineup: c.inLineup || false }));
     
-    battleManager.homePlayers.forEach((p, i) => {
-      if (gd.homePlayers[i]) Object.assign(p, gd.homePlayers[i]);
-    });
-    battleManager.awayPlayers.forEach((p, i) => {
-      if (gd.awayPlayers[i]) Object.assign(p, gd.awayPlayers[i]);
-    });
+    const lineupData = gd.lineup || {};
+    for (const slot of SLOTS) {
+      const cid = lineupData[slot];
+      lineup[slot] = cid ? backpack.find(c => c.id === cid) || null : null;
+    }
     
-    battleManager.homeScore = gd.homeScore || 0;
-    battleManager.awayScore = gd.awayScore || 0;
-    battleManager.currentRound = gd.currentRound || 0;
-    battleManager.possession = gd.possession || Constants.Possession.HOME;
-    battleManager.homeTimeouts = gd.homeTimeouts ?? 2;
-    battleManager.awayTimeouts = gd.awayTimeouts ?? 2;
-    battleManager.homeSubstitutions = gd.homeSubstitutions ?? 3;
-    battleManager.awaySubstitutions = gd.awaySubstitutions ?? 3;
-    battleManager.gameOver = gd.gameOver || false;
-    battleManager.gameWinner = gd.gameWinner || null;
-    
-    battleManager._calcSynergies(battleManager.homePlayers, 'home');
-    battleManager._calcSynergies(battleManager.awayPlayers, 'away');
-    
-    renderAll();
-    updateScoreboard();
-    updateGameInfo();
-    updateTimeoutsDisplay();
-    updateSubstitutionsDisplay();
-    resetActionState();
-    
-    updateStatusBar('📂 读档成功！');
-    addLog('📂 已读取云端存档');
-  } catch (e) {
-    updateStatusBar('⚠️ 读档失败: ' + e.message);
+    saveToStorage();
+    updateUI();
+    showModal('加载成功', '存档已加载');
+  } catch(e) {
+    showModal('加载失败', e.message);
   }
 }
 
-function logout() {
-  auth.signOut().then(() => {
-    window.location.href = 'login.html';
-  });
-}
-
-// ===================== 联机对战 =====================
-
+// ===================== 联机系统（简化） =====================
 function showOnlineMenu() {
-  console.log('🔍 showOnlineMenu 被调用了');
-  if (!currentUser) {
-    updateStatusBar('⚠️ 请先登录才能联机');
-    return;
-  }
-  
   const modal = document.getElementById('modal-overlay');
-  const modalTitle = document.getElementById('modal-title');
-  const modalBody = document.getElementById('modal-body');
-  const confirmBtn = document.getElementById('modal-confirm');
-  const cancelBtn = document.getElementById('modal-cancel');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
   
-  modalTitle.textContent = '🎮 联机对战';
-  modalBody.innerHTML = `
-    <div style="margin:10px 0;">
-      <button id="btn-online-create" class="btn btn-primary" style="width:100%;margin-bottom:8px;padding:12px;font-size:1.1em;">
-        🏠 创建房间
-      </button>
-    </div>
-    <div style="margin:15px 0;text-align:center;color:#888;">— 或 —</div>
-    <div style="margin:10px 0;">
-      <input type="text" id="input-room-id" placeholder="输入4位房间号加入" 
-        style="width:100%;padding:10px;background:rgba(255,255,255,0.06);border:1px solid #4a4a7a;border-radius:6px;color:#fff;text-align:center;font-size:1em;letter-spacing:4px;">
-      <button id="btn-online-join" class="btn btn-secondary" style="width:100%;margin-top:8px;padding:10px;">
-        🔗 加入房间
-      </button>
-    </div>
-    <div id="online-status" style="margin-top:10px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;font-size:0.85em;color:#888;">
-      🟢 已登录，可以联机
+  title.textContent = '🌐 联机对战';
+  body.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button class="btn btn-primary" id="btn-online-create" style="padding:12px;">创建房间</button>
+      <div style="display:flex;gap:5px;">
+        <input id="input-room-id" placeholder="输入房间号" style="flex:1;padding:8px;background:rgba(255,255,255,0.1);border:1px solid #4a4a7a;border-radius:6px;color:#fff;">
+        <button class="btn btn-primary" id="btn-online-join" style="padding:8px 15px;">加入</button>
+      </div>
     </div>
   `;
   
-  confirmBtn.textContent = '关闭';
-  cancelBtn.style.display = 'none';
+  confirm.textContent = '关闭';
+  confirm.onclick = () => modal.classList.add('hidden');
+  cancel.style.display = 'none';
   modal.classList.remove('hidden');
   
+  // 绑定事件
   setTimeout(() => {
-    const createBtn = document.getElementById('btn-online-create');
-    const joinBtn = document.getElementById('btn-online-join');
-    const roomInput = document.getElementById('input-room-id');
-    
-    if (createBtn) {
-      createBtn.onclick = () => handleCreateRoom();
-    }
-    
-    if (joinBtn && roomInput) {
-      joinBtn.onclick = () => {
-        const roomId = roomInput.value.trim().toUpperCase();
-        if (roomId) handleJoinRoom(roomId);
-      };
-      roomInput.onkeydown = (e) => {
-        if (e.key === 'Enter') {
-          const roomId = roomInput.value.trim().toUpperCase();
-          if (roomId) handleJoinRoom(roomId);
-        }
-      };
-    }
+    document.getElementById('btn-online-create')?.addEventListener('click', handleCreateRoom);
+    document.getElementById('btn-online-join')?.addEventListener('click', () => {
+      const input = document.getElementById('input-room-id');
+      if (input && input.value.trim()) handleJoinRoom(input.value.trim().toUpperCase());
+    });
   }, 100);
-  
-  confirmBtn.onclick = () => {
-    modal.classList.add('hidden');
-  };
 }
 
 async function handleCreateRoom() {
-  console.log('🔍 handleCreateRoom 被调用了');
-  console.log('🔍 currentUser =', !!currentUser);
   const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-  const username = currentUser.email?.split('@')[0] || '玩家';
+  const username = currentUser?.email?.split('@')[0] || '玩家';
   
   try {
-    await db.collection('rooms').doc(roomId).set({
-      hostId: currentUser.uid,
-      hostName: username,
-      guestId: '',
-      guestName: '',
-      status: 'waiting',
-      lastAction: '',
-      lastActionBy: '',
+    await fdb.collection('rooms').doc(roomId).set({
+      host: username,
+      guest: null,
       hostReady: false,
       guestReady: false,
-      createdAt: new Date().toISOString()
+      status: 'waiting',
+      createdAt: new Date()
     });
     
-    currentRoomId = roomId;
-    isHostPlayer = true;
     hideModal();
-    updateStatusBar('🔗 房间已创建: ' + roomId);
-    addLog('🔗 房间 ' + roomId + ' 已创建，等待对手加入...');
+    showModal('房间已创建', `房间号: ${roomId}\n分享给好友加入\n等待对手...`);
     
+    isHostPlayer = true;
+    currentRoomId = roomId;
     listenRoom(roomId);
   } catch(e) {
-    console.error('创建房间错误:', e);
-    alert('创建房间失败:\n' + e.message + '\n\n请把这段报错截图发给开发者');
+    showModal('创建失败', e.message);
   }
 }
 
 async function handleJoinRoom(roomId) {
-  const username = currentUser.email?.split('@')[0] || '玩家';
+  const username = currentUser?.email?.split('@')[0] || '玩家';
   
   try {
-    const roomRef = db.collection('rooms').doc(roomId);
+    const roomRef = fdb.collection('rooms').doc(roomId);
     const roomSnap = await roomRef.get();
-    
-    if (!roomSnap.exists) {
-      updateStatusBar('⚠️ 房间不存在');
-      return;
-    }
+    if (!roomSnap.exists) { showModal('错误', '房间不存在'); return; }
     
     const room = roomSnap.data();
-    if (room.status !== 'waiting') {
-      updateStatusBar('⚠️ 房间已开始或已结束');
-      return;
-    }
+    if (room.status !== 'waiting') { showModal('错误', '房间已满或已关闭'); return; }
+    if (room.host === username) { showModal('错误', '不能加入自己的房间'); return; }
     
-    if (room.hostId === currentUser.uid) {
-      updateStatusBar('⚠️ 不能加入自己的房间');
-      return;
-    }
-    
-    await roomRef.update({
-      guestId: currentUser.uid,
-      guestName: username,
-      status: 'playing'
-    });
-    
-    currentRoomId = roomId;
-    isHostPlayer = false;
+    await roomRef.update({ guest: username, status: 'ready' });
     hideModal();
-    updateStatusBar('🎮 已加入房间 ' + roomId + '，对局开始！');
-    addLog('🎮 已加入房间 ' + roomId);
+    showModal('加入成功', `已加入 ${room.host} 的房间`);
     
+    isHostPlayer = false;
+    currentRoomId = roomId;
     listenRoom(roomId);
   } catch(e) {
-    updateStatusBar('⚠️ 加入房间失败: ' + e.message);
+    showModal('加入失败', e.message);
   }
 }
 
 function listenRoom(roomId) {
-  if (roomUnsubscribe) roomUnsubscribe();
-  
-  roomUnsubscribe = db.collection('rooms').doc(roomId).onSnapshot((snapshot) => {
-    if (!snapshot.exists) {
-      updateStatusBar('⚠️ 房间已关闭');
-      return;
-    }
-    
+  if (!fdb) return;
+  roomUnsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snapshot) => {
+    if (!snapshot.exists) return;
     const room = snapshot.data();
-    
-    if (isHostPlayer && room.guestId && room.guestName && room.status === 'playing') {
-      updateStatusBar('🎮 ' + room.guestName + ' 已加入！');
-      addLog('🎮 ' + room.guestName + ' 已加入房间！');
+    if (room.status === 'playing') {
+      // 同步比赛
     }
-    
-    if (room.lastAction && room.lastActionBy !== currentUser.uid) {
-      try {
-        const action = JSON.parse(room.lastAction);
-        addLog('🤝 对手: ' + (action.desc || '操作完成'));
-      } catch(e) {}
-    }
-  }, (error) => {
-    updateStatusBar('⚠️ 连接错误: ' + error.message);
   });
 }
 
-async function syncGameAction(desc) {
-  if (!currentRoomId || !currentUser) return;
-  
-  try {
-    await db.collection('rooms').doc(currentRoomId).update({
-      lastAction: JSON.stringify({ desc: desc, time: Date.now() }),
-      lastActionBy: currentUser.uid
-    });
-  } catch(e) {
-    console.error('Sync error:', e);
-  }
-}
-
 function hideModal() {
-  document.getElementById('modal-overlay').classList.add('hidden');
+  document.getElementById('modal-overlay')?.classList.add('hidden');
 }
 
-// ===================== 挂载到全局 =====================
-window.initAuthUI = initAuthUI;
-window.saveGame = saveGame;
-window.loadGame = loadGame;
-window.showOnlineMenu = showOnlineMenu;
-window.syncGameAction = syncGameAction;
-
-// 延迟绑定联机按钮（等 main.js 初始化完成后）
-console.log('🔍 auth-ui: 开始延迟绑定联机按钮');
-console.log('🔍 auth-ui: window.showOnlineMenu =', typeof window.showOnlineMenu);
-setTimeout(() => {
-  const btnOnline = document.getElementById('btn-online');
-  console.log('🔍 auth-ui: btnOnline found =', !!btnOnline);
-  if (btnOnline) {
-    // 移除 main.js 绑定的旧事件
-    const newBtn = btnOnline.cloneNode(true);
-    btnOnline.parentNode.replaceChild(newBtn, btnOnline);
-    newBtn.addEventListener('click', showOnlineMenu);
-  }
-}, 500);
-
-console.log('✅ auth-ui.js (兼容版) loaded');
+// ===================== 导出给main.js使用 =====================
+// saveGame 和 loadGame 通过全局函数调用
