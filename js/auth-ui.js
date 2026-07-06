@@ -252,9 +252,9 @@ function showHostLobby(roomId, hostName) {
   const cancel = document.getElementById('modal-cancel');
   
   title.textContent = '🎮 联机房间';
-  body.innerHTML = \`
+  body.innerHTML = `
     <div style="text-align:center;">
-      <p style="font-size:1.8em;color:#ffd700;margin:10px 0;">\${roomId}</p>
+      <p style="font-size:1.8em;color:#ffd700;margin:10px 0;">${roomId}</p>
       <p style="color:#888;">分享房间号给好友</p>
       <hr style="border-color:#333;margin:12px 0;">
       <div id="lobby-guest-status" style="color:#aaa;margin:8px 0;">等待玩家加入...</div>
@@ -269,7 +269,7 @@ function showHostLobby(roomId, hostName) {
         <p style="color:#aaa;font-size:0.85em;margin-top:5px;">双方都已准备，可以开始了</p>
       </div>
     </div>
-  \`;
+  `;
   
   confirm.style.display = 'none';
   cancel.textContent = '离开房间';
@@ -304,7 +304,7 @@ function showHostLobby(roomId, hostName) {
       const startArea = document.getElementById('lobby-start-area');
       
       if (room.guest) {
-        if (guestStatusEl) guestStatusEl.innerHTML = \`对手: \${room.guest} 已加入 ✅\`;
+        if (guestStatusEl) guestStatusEl.innerHTML = `对手: ${room.guest} 已加入 ✅`;
         if (guestReadyEl) {
           if (room.guestReady) {
             guestReadyEl.innerHTML = '对手: 已准备 ✅';
@@ -381,10 +381,10 @@ function showGuestLobby(roomId, guestName, hostName) {
   const cancel = document.getElementById('modal-cancel');
   
   title.textContent = '🎮 等待房主开战';
-  body.innerHTML = \`
+  body.innerHTML = `
     <div style="text-align:center;">
-      <p style="color:#aaa;">房主: \${hostName}</p>
-      <p style="color:#888;">房间号: \${roomId}</p>
+      <p style="color:#aaa;">房主: ${hostName}</p>
+      <p style="color:#888;">房间号: ${roomId}</p>
       <hr style="border-color:#333;margin:12px 0;">
       <div id="guest-lobby-status" style="margin:8px 0;">
         <button class="btn btn-primary" id="btn-guest-ready" style="padding:10px 25px;">✅ 我准备</button>
@@ -393,7 +393,7 @@ function showGuestLobby(roomId, guestName, hostName) {
       <div id="guest-host-status" style="margin:8px 0;color:#888;">房主: 未准备 ❌</div>
       <div id="guest-waiting-msg" style="color:#ff9800;margin-top:10px;display:none;">等待房主开始游戏...</div>
     </div>
-  \`;
+  `;
   
   confirm.style.display = 'none';
   cancel.textContent = '离开房间';
