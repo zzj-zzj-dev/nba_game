@@ -33,6 +33,10 @@ let isHostPlayer = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
+  // 先绑定默认行为（防止异步回调未触发时按钮无反应）
+  const btn = document.getElementById('btnAuth');
+  if (btn) btn.onclick = handleAuth;
+  
   if (!auth) {
     document.getElementById('loginStatus').textContent = '离线模式';
     document.getElementById('btnAuth').textContent = '登录';
