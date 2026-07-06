@@ -574,8 +574,12 @@ function showFusionModal(mainCardId) {
   const master = getMasterById(mainCard.masterId);
   if (!master) return;
   
-  // 获取可用的素材卡（闲置的、非主卡）
-  const materials = backpack.filter(c => c.id !== mainCardId && !isCardInLineup(c));
+  // 获取可用的素材卡（须相同球员：名字+年代一致，闲置且非主卡）
+  const materials = backpack.filter(c => {
+    if (c.id === mainCardId || isCardInLineup(c)) return false;
+    const cm = getMasterById(c.masterId);
+    return cm && cm.name === master.name && cm.year === master.year;
+  });
   
   const modal = document.getElementById('modal-overlay');
   const body = document.getElementById('modal-body');
@@ -869,6 +873,10 @@ function createPlayerCard(player, isHome, isBench) {
       <span class="attr-mini" title="突破">突${player.attrs.drive || '?'}</span>
       <span class="attr-mini" title="篮下">篮${player.attrs.post || '?'}</span>
       <span class="attr-mini" title="三分">三${player.attrs.threePointAttack || '?'}</span>
+      <span class="attr-mini" title="组织">组${player.attrs.playmaking || '?'}</span>
+      <span class="attr-mini" title="外防">外${player.attrs.perimeterDefense || '?'}</span>
+      <span class="attr-mini" title="内防">内${player.attrs.interiorDefense || '?'}</span>
+      <span class="attr-mini" title="篮板">板${player.attrs.rebounding || '?'}</span>
       <span class="attr-mini" title="体力">体${player.attrs.stamina || '?'}</span>
     </div>
     ${badges}${subBonus}${synergy}
@@ -1276,7 +1284,7 @@ function updateUI() {
           const slotPos = slot.toUpperCase();
           const isMismatch = !slot.startsWith('bench') && !master.positions.includes(slotPos);
           el.textContent = master.name + (card.stars > 0 ? ' ⭐'.repeat(card.stars) : '');
-          if (ovrEl) ovrEl.textContent = master.overall + (card.stars||0) * 2;
+          if (ovrEl) ovrEl.textContent = master.overall + (card.stars||0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR;
           el.style.color = isMismatch ? '#f44336' : '';
           el.style.fontWeight = isMismatch ? 'bold' : '';
         } else {
