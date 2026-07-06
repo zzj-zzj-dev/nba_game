@@ -263,9 +263,21 @@ function showPackAnimationResults(cards, title) {
     `);
   }
   
-  // 清除特效
-  effect.innerHTML = '';
-  effect.className = 'rarity-effect';
+  // 特效
+  const effects = {
+    GOAT: '🎆 彩虹炸裂！',
+    SSR: '✨ 金色闪光！',
+    SR: '💜 紫色炫光！',
+    R: '💙 蓝色光芒！',
+    N: '⚪ 白色微光'
+  };
+  
+  effect.innerHTML = `<div class="effect-text">${effects[highestTier] || ''}</div>`;
+  if (highestTier === 'GOAT') effect.className = 'rarity-effect goat-effect';
+  else if (highestTier === 'SSR') effect.className = 'rarity-effect ssr-effect';
+  else if (highestTier === 'SR') effect.className = 'rarity-effect sr-effect';
+  else if (highestTier === 'R') effect.className = 'rarity-effect r-effect';
+  else effect.className = 'rarity-effect n-effect';
   
   cardDisplay.innerHTML = cardElements.join('');
   
@@ -355,7 +367,7 @@ function showSelectPlayerModal(slot) {
     cardEl.innerHTML = `
       <div class="sc-name" style="color:${color}">${master.name} ${card.stars > 0 ? '⭐'.repeat(card.stars) : ''}</div>
       <div class="sc-info">${master.team} | ${master.year} | ${master.tier}</div>
-      <div class="sc-pos">可打: ${master.positions.join('/')} | 总评: ${overall}${penalty > 0 ? ' 位置不适配-10%' : ''}</div>
+      <div class="sc-pos">可打: ${master.positions.join('/')} | 总评: ${overall}${penalty > 0 ? ' ⚠️-10%' : ''}</div>
     `;
     cardEl.onclick = () => {
       // 上阵
@@ -495,12 +507,11 @@ function showPlayerDetail(card) {
   const attrLabels = {
     midRangeShot: '中投', drive: '突破', post: '篮下',
     threePointAttack: '三分', playmaking: '组织',
-    perimeterDefense: '外防', interiorDefense: '内防', rebounding: '篮板',
-    stamina: '体力'
+    perimeterDefense: '外防', interiorDefense: '内防', rebounding: '篮板'
   };
   
   let attrHTML = '';
-  const attrOrder = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding','stamina'];
+  const attrOrder = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding'];
   for (const key of attrOrder) {
     const val = master.attrs[key] || 60;
     const starBonus = (card.stars || 0) * GameConfig.FUSION.ATTR_BONUS_PER_STAR;
@@ -521,15 +532,14 @@ function showPlayerDetail(card) {
       <div class="detail-tier" style="background:${color}">${tierLabels[master.tier]}</div>
     </div>
     <div class="detail-info">
-      <div>位置: ${master.positions.join('/')} | 球队: ${master.team}</div>
-      <div>赛季: ${master.year}</div>
-      <div>星级: ${card.stars || 0} 星 | 总评: ${master.overall + (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR}</div>
-      ${inLineup ? '<div style="color:#4caf50;">已上阵</div>' : '<div style="color:#aaa;">闲置背包</div>'}
+      <div>🏀 ${master.positions.join('/')} | ${master.team}</div>
+      <div>📅 ${master.year}</div>
+      <div>⭐ ${card.stars || 0} 星 | ⭐ 总评 ${master.overall + (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR}</div>
+      ${inLineup ? '<div style="color:#4caf50;">✅ 已上阵</div>' : '<div style="color:#aaa;">💼 闲置背包</div>'}
     </div>
     <div class="detail-attrs">${attrHTML}</div>
     ${inLineup ? '' : `<div class="detail-actions">
-      <button class="btn btn-danger" onclick="decomposeCard('${card.id}');closePlayerDetail();">分解(${GameConfig.DECOMPOSE[master.tier]}金币)</button>
-      <button class="btn btn-warning" onclick="showSwapModal('${card.id}');closePlayerDetail();">置换(${GameConfig.SWAP_COST[master.tier]}金币)</button>
+      <button class="btn btn-danger" onclick="decomposeCard('${card.id}');closePlayerDetail();">分解 (${GameConfig.DECOMPOSE[master.tier]}金币)</button>
       <button class="btn btn-primary" onclick="showFusionModal('${card.id}');closePlayerDetail();">融合升星</button>
     </div>`}
   `;
@@ -680,7 +690,11 @@ function showSwapModal(cardId) {
 // ===================== 阵容完整性检查 =====================
 function isLineupComplete() {
   const starters = ['pg','sg','sf','pf','c'];
+  const bench = ['bench1','bench2','bench3'];
   for (const s of starters) {
+    if (!lineup[s]) return false;
+  }
+  for (const s of bench) {
     if (!lineup[s]) return false;
   }
   return true;
@@ -693,7 +707,7 @@ function getLineupOverall() {
 // ===================== 对战系统 =====================
 function startBattle(difficulty) {
   if (!isLineupComplete()) {
-    showModal('提示', '请先配置完整阵容（5首发）再开始对战！');
+    showModal('提示', '请先配置完整阵容（5首发+3替补）再开始对战！');
     switchTab('roster');
     return;
   }
@@ -713,34 +727,30 @@ function startBattle(difficulty) {
   const homeTeam = createMatchPlayersFromLineup(lineup);
   const awayTeam = generateRandomTeam('AI ' + config.label, difficulty);
   
-  // 确保有足够球员（填充到8人）
+  // 处理没生成完整的情况
   while (homeTeam.length < 8) {
-    const fillIdx = homeTeam.length;
-    const fillPos = ['PG','SG','SF','PF','C'][fillIdx % 5];
-    const ph = createPlayer({
-      id: 'ph_' + fillIdx,
+    const placeholder = createPlayer({
+      id: 'ph_' + homeTeam.length,
       playerName: '替补球员',
-      position: fillPos,
+      position: ['PG','SG','SF','PF','C'][homeTeam.length % 5],
       teamName: '主场',
-      isStarter: fillIdx < 5,
-      isSubstitute: fillIdx >= 5,
-      attrs: { midRangeShot:60, drive:60, post:60, threePointAttack:60, playmaking:60, perimeterDefense:60, interiorDefense:60, rebounding:60, stamina:60 }
+      isStarter: homeTeam.length < 5,
+      isSubstitute: homeTeam.length >= 5,
+      attrs: { midRangeShot:60, drive:60, post:60, threePointAttack:60, playmaking:60, perimeterDefense:60, interiorDefense:60, rebounding:60 }
     });
-    homeTeam.push(ph);
+    homeTeam.push(placeholder);
   }
   while (awayTeam.length < 8) {
-    const fillIdx = awayTeam.length;
-    const fillPos = ['PG','SG','SF','PF','C'][fillIdx % 5];
-    const ph = createPlayer({
-      id: 'ph_away_' + fillIdx,
-      playerName: 'AI替补',
-      position: fillPos,
-      teamName: config.label,
-      isStarter: fillIdx < 5,
-      isSubstitute: fillIdx >= 5,
-      attrs: { midRangeShot:55, drive:55, post:55, threePointAttack:55, playmaking:55, perimeterDefense:55, interiorDefense:55, rebounding:55, stamina:60 }
-    });
-    awayTeam.push(ph);
+    const ph = getMasterDB()[Math.floor(Math.random() * getMasterDB().length)];
+    if (ph) {
+      const cp = createPlayerFromMaster(ph.id);
+      if (cp) {
+        cp.isStarter = awayTeam.length < 5;
+        cp.isSubstitute = awayTeam.length >= 5;
+        cp.teamName = 'AI队';
+        awayTeam.push(cp);
+      }
+    } else break;
   }
   
   // 初始化比赛（沿用原BattleManager）
@@ -865,11 +875,10 @@ function createPlayerCard(player, isHome, isBench) {
       <div class="stamina-bar"><div class="stamina-bar-fill ${staminaClass}" style="width:${staminaPct}%"></div></div>
     </div>
     <div class="player-attrs">
-      <span class="attr-mini" title="中投">中${player.attrs.midRangeShot || '?'}</span>
-      <span class="attr-mini" title="突破">突${player.attrs.drive || '?'}</span>
-      <span class="attr-mini" title="篮下">篮${player.attrs.post || '?'}</span>
-      <span class="attr-mini" title="三分">三${player.attrs.threePointAttack || '?'}</span>
-      <span class="attr-mini" title="体力">体${player.attrs.stamina || '?'}</span>
+      <span class="attr-mini">🏀${player.attrs.midRangeShot || '?'}</span>
+      <span class="attr-mini">💨${player.attrs.drive || '?'}</span>
+      <span class="attr-mini">🏋️${player.attrs.post || '?'}</span>
+      <span class="attr-mini">🎯${player.attrs.threePointAttack || '?'}</span>
     </div>
     ${badges}${subBonus}${synergy}
   `;
@@ -1293,20 +1302,7 @@ function updateUI() {
   
   // 更新阵容总评标记
   const overall = document.getElementById('homeOverall');
-  if (overall) {
-    const ov = getLineupOverall();
-    overall.textContent = ov + '分';
-  }
-  
-  // 阵容总评详情 - 影响因素
-  const detailEl = document.getElementById('lineupDetail');
-  if (detailEl) {
-    detailEl.innerHTML = getLineupAnalysis();
-  }
-  const rosterDetailEl = document.getElementById('rosterLineupDetail');
-  if (rosterDetailEl) {
-    rosterDetailEl.innerHTML = '<div style="color:#ffd700;font-weight:bold;margin-bottom:4px;">阵容分析</div>' + getLineupAnalysis();
-  }
+  if (overall) overall.textContent = getLineupOverall();
   
   // 更新对战页面状态
   const battleStatus = document.getElementById('battleStatus');
@@ -1316,7 +1312,7 @@ function updateUI() {
       battleStatus.style.color = '#4caf50';
       document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'auto');
     } else {
-      battleStatus.textContent = '⚠️ 请先配置完整阵容（5首发）';
+      battleStatus.textContent = '⚠️ 请先配置完整阵容（5首发+3替补）';
       battleStatus.style.color = '#f44336';
       document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'none');
     }
@@ -1328,109 +1324,6 @@ function updateLineupDisplay() {
 }
 
 // ===================== 键盘快捷键 =====================
-
-// ===================== 阵容分析系统 =====================
-function getLineupAnalysis() {
-  const starters = ['pg','sg','sf','pf','c'];
-  let totalOvr = 0, count = 0;
-  let midSum = 0, driveSum = 0, postSum = 0, threeSum = 0;
-  let playSum = 0, perimSum = 0, interSum = 0, rebSum = 0;
-  let mismatchCount = 0;
-  
-  for (const slot of starters) {
-    const card = lineup[slot];
-    if (!card) continue;
-    const master = getMasterById(card.masterId);
-    if (!master) continue;
-    const starBonus = (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR;
-    const slotPos = slot.toUpperCase();
-    const isMismatch = !master.positions.includes(slotPos);
-    const penalty = isMismatch ? 0.1 : 0;
-    const ovr = Math.round(master.overall * (1 - penalty)) + starBonus;
-    totalOvr += ovr;
-    count++;
-    if (isMismatch) mismatchCount++;
-    
-    midSum += master.attrs.midRangeShot || 60;
-    driveSum += master.attrs.drive || 60;
-    postSum += master.attrs.post || 60;
-    threeSum += master.attrs.threePointAttack || 60;
-    playSum += master.attrs.playmaking || 60;
-    perimSum += master.attrs.perimeterDefense || 60;
-    interSum += master.attrs.interiorDefense || 60;
-    rebSum += master.attrs.rebounding || 60;
-  }
-  
-  if (count === 0) return '尚未配置阵容';
-  
-  const avgOvr = Math.round(totalOvr / count);
-  const avgThree = threeSum / count;
-  const avgMid = midSum / count;
-  const avgDrive = driveSum / count;
-  const avgPost = postSum / count;
-  const avgPlay = playSum / count;
-  const avgPerim = perimSum / count;
-  const avgInter = interSum / count;
-  const avgReb = rebSum / count;
-  
-  let details = [];
-  let deductions = [];
-  
-  // 空间能力（三分+中投）
-  const spaceScore = (avgThree + avgMid) / 2;
-  if (spaceScore >= 85) deductions.push('空间能力出色 +加分');
-  else if (spaceScore >= 75) deductions.push('空间能力良好');
-  else if (spaceScore >= 65) deductions.push('空间能力一般');
-  else deductions.push('空间能力不佳 -扣分');
-  
-  // 外线火力（三分）
-  if (avgThree >= 85) deductions.push('外线火力凶猛 +加分');
-  else if (avgThree >= 70) deductions.push('外线火力充足');
-  else if (avgThree < 60) deductions.push('外线火力不足 -扣分');
-  
-  // 内线得分（篮下+突破）
-  const insideScore = (avgPost + avgDrive) / 2;
-  if (insideScore >= 85) deductions.push('内线杀伤力强 +加分');
-  else if (insideScore >= 70) deductions.push('内线能力良好');
-  else deductions.push('内线能力偏弱 -扣分');
-  
-  // 防守能力（内防+外防）
-  const defScore = (avgInter + avgPerim) / 2;
-  if (defScore >= 85) deductions.push('防守坚固 +加分');
-  else if (defScore >= 75) deductions.push('防守可靠');
-  else if (defScore >= 65) deductions.push('防守一般');
-  else deductions.push('防守薄弱 -扣分');
-  
-  // 篮板能力
-  if (avgReb >= 85) deductions.push('篮板统治力强 +加分');
-  else if (avgReb >= 70) deductions.push('篮板能力良好');
-  else deductions.push('篮板能力偏弱 -扣分');
-  
-  // 组织能力
-  if (avgPlay >= 85) deductions.push('组织流畅 +加分');
-  else if (avgPlay >= 70) deductions.push('组织能力良好');
-  else deductions.push('组织串联不足 -扣分');
-  
-  // 位置适配
-  if (mismatchCount > 0) deductions.push(mismatchCount + '个球员位置不适配 -扣分');
-  
-  // 中投
-  if (avgMid >= 85) deductions.push('中投精准 +加分');
-  
-  let html = '<div style="font-size:0.85em;color:#aaa;line-height:1.6;margin-top:4px;">';
-  html += '<div style="color:#ffd700;font-weight:bold;">阵容平均总评: ' + avgOvr + '</div>';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">';
-  for (const d of deductions) {
-    const isGood = d.includes('+加分') || d.includes('精准') || d.includes('凶猛') || d.includes('坚固') || d.includes('统治力') || d.includes('流畅') || d.includes('出色');
-    const isBad = d.includes('-扣分') || d.includes('不足') || d.includes('薄弱') || d.includes('偏弱') || d.includes('不佳') || d.includes('不适配');
-    const color = isGood ? '#4caf50' : (isBad ? '#f44336' : '#888');
-    html += '<span style="background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:4px;color:' + color + ';">' + d + '</span>';
-  }
-  html += '</div></div>';
-  
-  return html;
-}
-
 function bindEvents() {
   // 避免重新绑定
 }
