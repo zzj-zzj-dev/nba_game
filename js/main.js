@@ -966,6 +966,12 @@ function handlePlayerClick(player, isHome) {
     return;
   }
   
+  // 联机模式下：自己的回合一定是在进攻，直接走进攻逻辑
+  if (typeof onlineGame !== 'undefined' && currentRoomId) {
+    handleHomeOffense(player);
+    return;
+  }
+  
   const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
   
   if (isHomeOffense) {
@@ -1115,11 +1121,20 @@ function resetActionState() {
     return;
   }
   
-  // 联机模式下，非自己回合隐藏操作区
-  if (typeof onlineGame !== 'undefined' && onlineGame.myTurn === false && currentRoomId) {
-    playerSelectEl.classList.add('hidden');
+  // 联机模式下
+  if (typeof onlineGame !== 'undefined' && currentRoomId) {
+    if (onlineGame.myTurn === false) {
+      // 非自己回合，隐藏操作区
+      playerSelectEl.classList.add('hidden');
+      attackTypeSelectEl.classList.add('hidden');
+      actionTitle.textContent = '⏳ 等待对手操作...';
+      return;
+    }
+    // 自己的回合，正常显示进攻选项
+    actionTitle.textContent = '🎯 你的回合 - 选择进攻球员';
+    playerSelectEl.classList.remove('hidden');
     attackTypeSelectEl.classList.add('hidden');
-    actionTitle.textContent = '⏳ 等待对手操作...';
+    renderAttackerSelectOnline();
     return;
   }
   
@@ -1143,6 +1158,27 @@ function renderAttackerSelect() {
     btn.textContent = `${p.playerName} (${p.position}) ${StaminaTool.getStaminaDescription(p)}`;
     if (p.currentStamina <= 0) btn.disabled = true;
     btn.onclick = () => handlePlayerClick(p, true);
+    playerSelectEl.appendChild(btn);
+  });
+}
+
+function renderAttackerSelectOnline() {
+  if (!battleManager) return;
+  // 联机模式：取当前进攻方的球员（自己的阵容）
+  const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
+  const isMyOffense = (isHomeOffense && onlineGame.isHost) || (!isHomeOffense && !onlineGame.isHost);
+  if (!isMyOffense) return;
+  
+  // 自己的阵容作为进攻方
+  const isHost = onlineGame.isHost;
+  const court = isHost ? battleManager.getOnCourtPlayers(true) : battleManager.getOnCourtPlayers(false);
+  playerSelectEl.innerHTML = '';
+  court.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-attack';
+    btn.textContent = `${p.playerName} (${p.position}) ${StaminaTool.getStaminaDescription(p)}`;
+    if (p.currentStamina <= 0) btn.disabled = true;
+    btn.onclick = () => handlePlayerClick(p, isHost);
     playerSelectEl.appendChild(btn);
   });
 }
