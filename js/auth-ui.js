@@ -286,7 +286,13 @@ function showHostLobby(roomId, hostName) {
     const readyBtn = document.getElementById('btn-lobby-host-ready');
     if (readyBtn) {
       readyBtn.onclick = async () => {
-        await fdb.collection('rooms').doc(roomId).update({ hostReady: true });
+        const myTeam = createMatchPlayersFromLineup(lineup);
+        const teamData = myTeam.map(p => ({
+          playerName: p.playerName, position: p.position, teamName: p.teamName,
+          isStarter: p.isStarter, isSubstitute: p.isSubstitute,
+          attrs: p.attrs
+        }));
+        await fdb.collection('rooms').doc(roomId).update({ hostReady: true, hostTeam: teamData });
         readyBtn.disabled = true;
         readyBtn.textContent = '✅ 已准备';
         document.getElementById('lobby-host-status').textContent = '已准备 ✅';
@@ -298,6 +304,12 @@ function showHostLobby(roomId, hostName) {
     const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
       if (!snap.exists) return;
       const room = snap.data();
+      
+      // 游戏开始，关闭大厅
+      if (room.status === 'playing') {
+        hideModal();
+        return;
+      }
       
       const guestStatusEl = document.getElementById('lobby-guest-status');
       const guestReadyEl = document.getElementById('lobby-guest-ready');
@@ -331,6 +343,8 @@ function showHostLobby(roomId, hostName) {
     const startBtn = document.getElementById('btn-lobby-start');
     if (startBtn) {
       startBtn.onclick = async () => {
+        startBtn.disabled = true;
+        startBtn.textContent = '⏳ 开始中...';
         const myTeam = createMatchPlayersFromLineup(lineup);
         const teamData = myTeam.map(p => ({
           playerName: p.playerName, position: p.position, teamName: p.teamName,
@@ -338,7 +352,7 @@ function showHostLobby(roomId, hostName) {
           attrs: p.attrs
         }));
         await fdb.collection('rooms').doc(roomId).update({ hostTeam: teamData, status: 'playing' });
-        hideModal();
+        // host 端通过 listenRoom 的 'playing' 回调跳转
       };
     }
   }, 100);
@@ -410,7 +424,14 @@ function showGuestLobby(roomId, guestName, hostName) {
     const readyBtn = document.getElementById('btn-guest-ready');
     if (readyBtn) {
       readyBtn.onclick = async () => {
-        await fdb.collection('rooms').doc(roomId).update({ guestReady: true });
+        // 准备时上传自己的阵容
+        const myTeam = createMatchPlayersFromLineup(lineup);
+        const teamData = myTeam.map(p => ({
+          playerName: p.playerName, position: p.position, teamName: p.teamName,
+          isStarter: p.isStarter, isSubstitute: p.isSubstitute,
+          attrs: p.attrs
+        }));
+        await fdb.collection('rooms').doc(roomId).update({ guestReady: true, guestTeam: teamData });
         readyBtn.disabled = true;
         readyBtn.textContent = '✅ 已准备';
         document.getElementById('guest-ready-status').textContent = '已准备 ✅';
@@ -419,10 +440,17 @@ function showGuestLobby(roomId, guestName, hostName) {
       };
     }
     
-    // 监听房主准备状态
+    // 监听房主状态
     const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
       if (!snap.exists) return;
       const room = snap.data();
+      
+      // 如果开始了，关闭等待界面
+      if (room.status === 'playing') {
+        hideModal();
+        return;
+      }
+      
       const hostStatusEl = document.getElementById('guest-host-status');
       if (hostStatusEl) {
         if (room.hostReady) {
