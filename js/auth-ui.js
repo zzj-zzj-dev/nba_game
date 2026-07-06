@@ -186,71 +186,46 @@ async function handleCreateRoom() {
     });
     
     hideModal();
-    showModal('房间已创建', `房间号: ${roomId}\n分享给好友加入`);
     
     isHostPlayer = true;
     currentRoomId = roomId;
     listenRoom(roomId);
+    
+    // 立即显示等待界面（不先弹准备确认）
+    showHostLobby(roomId, username);
   } catch(e) {
     showModal('创建失败', e.message);
   }
 }
 
-
-function showReadyConfirm(roomId, isHost) {
+function showHostLobby(roomId, hostName) {
   const modal = document.getElementById('modal-overlay');
   const title = document.getElementById('modal-title');
   const body = document.getElementById('modal-body');
   const confirm = document.getElementById('modal-confirm');
   const cancel = document.getElementById('modal-cancel');
   
-  title.textContent = '⚔️ 准备开战';
-  body.innerHTML = '<p>获胜奖励: 100金币</p><p>点击准备表示同意</p>';
+  title.textContent = '🎮 联机房间';
+  body.innerHTML = \`
+    <div style="text-align:center;">
+      <p style="font-size:1.8em;color:#ffd700;margin:10px 0;">\${roomId}</p>
+      <p style="color:#888;">分享房间号给好友</p>
+      <hr style="border-color:#333;margin:12px 0;">
+      <div id="lobby-guest-status" style="color:#aaa;margin:8px 0;">等待玩家加入...</div>
+      <div id="lobby-host-ready" style="margin:8px 0;">
+        <button class="btn btn-primary" id="btn-lobby-host-ready" style="padding:10px 25px;">✅ 我准备</button>
+        <span id="lobby-host-status" style="margin-left:10px;color:#888;">未准备</span>
+      </div>
+      <div id="lobby-guest-ready" style="margin:8px 0;color:#888;">对手: 未加入</div>
+      <hr style="border-color:#333;margin:12px 0;">
+      <div id="lobby-start-area" style="display:none;">
+        <button class="btn btn-success" id="btn-lobby-start" style="padding:12px 30px;font-size:1.1em;">⚔️ 开始游戏</button>
+        <p style="color:#aaa;font-size:0.85em;margin-top:5px;">双方都已准备，可以开始了</p>
+      </div>
+    </div>
+  \`;
   
-  confirm.textContent = '✅ 我准备好了';
-  confirm.onclick = async () => {
-    modal.classList.add('hidden');
-    
-    const roomRef = fdb.collection('rooms').doc(roomId);
-    if (isHost) {
-      await roomRef.update({ hostReady: true });
-      showHostWaitingRoom(roomId);
-    } else {
-      await roomRef.update({ guestReady: true });
-      showModal('已准备', '已通知房主，等待比赛开始...');
-    }
-  };
-  
-  cancel.textContent = '取消';
-  cancel.onclick = () => modal.classList.add('hidden');
-  cancel.style.display = 'inline-block';
-  modal.classList.remove('hidden');
-}
-
-function showHostWaitingRoom(roomId) {
-  const modal = document.getElementById('modal-overlay');
-  const title = document.getElementById('modal-title');
-  const body = document.getElementById('modal-body');
-  const confirm = document.getElementById('modal-confirm');
-  const cancel = document.getElementById('modal-cancel');
-  
-  title.textContent = '⏳ 等待对手准备';
-  body.innerHTML = '<div id="waiting-status"><p>你已准备 ✅</p><p id="guest-ready-status">对手: 未准备 ❌</p></div>';
-  
-  confirm.textContent = '⚔️ 开始游戏';
   confirm.style.display = 'none';
-  confirm.onclick = async () => {
-    const myTeam = createMatchPlayersFromLineup(lineup);
-    const teamData = myTeam.map(p => ({
-      playerName: p.playerName, position: p.position, teamName: p.teamName,
-      isStarter: p.isStarter, isSubstitute: p.isSubstitute,
-      attrs: p.attrs
-    }));
-    
-    await fdb.collection('rooms').doc(roomId).update({ hostTeam: teamData, status: 'playing' });
-    hideModal();
-  };
-  
   cancel.textContent = '离开房间';
   cancel.onclick = () => {
     fdb.collection('rooms').doc(roomId).delete().catch(() => {});
@@ -260,19 +235,71 @@ function showHostWaitingRoom(roomId) {
   };
   modal.classList.remove('hidden');
   
-  const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
-    if (!snap.exists) return;
-    const room = snap.data();
-    const guestStatus = document.getElementById('guest-ready-status');
-    if (room.guestReady) {
-      if (guestStatus) guestStatus.innerHTML = '对手: 已准备 ✅';
-      confirm.style.display = 'inline-block';
-    } else {
-      if (guestStatus) guestStatus.innerHTML = '对手: 未准备 ❌';
-      confirm.style.display = 'none';
+  // 绑定准备按钮
+  setTimeout(() => {
+    const readyBtn = document.getElementById('btn-lobby-host-ready');
+    if (readyBtn) {
+      readyBtn.onclick = async () => {
+        await fdb.collection('rooms').doc(roomId).update({ hostReady: true });
+        readyBtn.disabled = true;
+        readyBtn.textContent = '✅ 已准备';
+        document.getElementById('lobby-host-status').textContent = '已准备 ✅';
+        document.getElementById('lobby-host-status').style.color = '#4caf50';
+      };
     }
-  });
+    
+    // 监听房间状态
+    const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
+      if (!snap.exists) return;
+      const room = snap.data();
+      
+      const guestStatusEl = document.getElementById('lobby-guest-status');
+      const guestReadyEl = document.getElementById('lobby-guest-ready');
+      const startArea = document.getElementById('lobby-start-area');
+      
+      if (room.guest) {
+        if (guestStatusEl) guestStatusEl.innerHTML = \`对手: \${room.guest} 已加入 ✅\`;
+        if (guestReadyEl) {
+          if (room.guestReady) {
+            guestReadyEl.innerHTML = '对手: 已准备 ✅';
+            guestReadyEl.style.color = '#4caf50';
+          } else {
+            guestReadyEl.innerHTML = '对手: 未准备 ❌';
+            guestReadyEl.style.color = '#888';
+          }
+        }
+        // 检查双方是否都已准备
+        if (room.hostReady && room.guestReady && startArea) {
+          startArea.style.display = 'block';
+        }
+      } else {
+        if (guestStatusEl) guestStatusEl.innerHTML = '等待玩家加入...';
+        if (guestReadyEl) guestReadyEl.innerHTML = '对手: 未加入';
+        if (startArea) startArea.style.display = 'none';
+      }
+    });
+  }, 100);
+  
+  // 绑定开始按钮
+  setTimeout(() => {
+    const startBtn = document.getElementById('btn-lobby-start');
+    if (startBtn) {
+      startBtn.onclick = async () => {
+        const myTeam = createMatchPlayersFromLineup(lineup);
+        const teamData = myTeam.map(p => ({
+          playerName: p.playerName, position: p.position, teamName: p.teamName,
+          isStarter: p.isStarter, isSubstitute: p.isSubstitute,
+          attrs: p.attrs
+        }));
+        await fdb.collection('rooms').doc(roomId).update({ hostTeam: teamData, status: 'playing' });
+        hideModal();
+      };
+    }
+  }, 100);
 }
+
+
+
 
 async function handleJoinRoom(roomId) {
   const username = currentUser?.email?.split('@')[0] || '玩家';
@@ -288,26 +315,90 @@ async function handleJoinRoom(roomId) {
     
     await roomRef.update({ guest: username });
     hideModal();
-    showModal('加入成功', `已加入 ${room.host} 的房间`);
     
     isHostPlayer = false;
     currentRoomId = roomId;
     listenRoom(roomId);
     
-    setTimeout(() => {
-      showReadyConfirm(roomId, false);
-    }, 500);
+    // 显示 guest 等待界面
+    showGuestLobby(roomId, username, room.host);
   } catch(e) {
     showModal('加入失败', e.message);
   }
 }
+
+function showGuestLobby(roomId, guestName, hostName) {
+  const modal = document.getElementById('modal-overlay');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  title.textContent = '🎮 等待房主开战';
+  body.innerHTML = \`
+    <div style="text-align:center;">
+      <p style="color:#aaa;">房主: \${hostName}</p>
+      <p style="color:#888;">房间号: \${roomId}</p>
+      <hr style="border-color:#333;margin:12px 0;">
+      <div id="guest-lobby-status" style="margin:8px 0;">
+        <button class="btn btn-primary" id="btn-guest-ready" style="padding:10px 25px;">✅ 我准备</button>
+        <span id="guest-ready-status" style="margin-left:10px;color:#888;">未准备</span>
+      </div>
+      <div id="guest-host-status" style="margin:8px 0;color:#888;">房主: 未准备 ❌</div>
+      <div id="guest-waiting-msg" style="color:#ff9800;margin-top:10px;display:none;">等待房主开始游戏...</div>
+    </div>
+  \`;
+  
+  confirm.style.display = 'none';
+  cancel.textContent = '离开房间';
+  cancel.onclick = () => {
+    fdb.collection('rooms').doc(roomId).update({ guest: null, guestReady: false }).catch(() => {});
+    if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
+    currentRoomId = null;
+    modal.classList.add('hidden');
+  };
+  modal.classList.remove('hidden');
+  
+  // 绑定准备按钮
+  setTimeout(() => {
+    const readyBtn = document.getElementById('btn-guest-ready');
+    if (readyBtn) {
+      readyBtn.onclick = async () => {
+        await fdb.collection('rooms').doc(roomId).update({ guestReady: true });
+        readyBtn.disabled = true;
+        readyBtn.textContent = '✅ 已准备';
+        document.getElementById('guest-ready-status').textContent = '已准备 ✅';
+        document.getElementById('guest-ready-status').style.color = '#4caf50';
+        document.getElementById('guest-waiting-msg').style.display = 'block';
+      };
+    }
+    
+    // 监听房主准备状态
+    const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
+      if (!snap.exists) return;
+      const room = snap.data();
+      const hostStatusEl = document.getElementById('guest-host-status');
+      if (hostStatusEl) {
+        if (room.hostReady) {
+          hostStatusEl.innerHTML = '房主: 已准备 ✅';
+          hostStatusEl.style.color = '#4caf50';
+        } else {
+          hostStatusEl.innerHTML = '房主: 未准备 ❌';
+          hostStatusEl.style.color = '#888';
+        }
+      }
+    });
+  }, 100);
+}
+
+
 
 function listenRoom(roomId) {
   if (!fdb) return;
   roomUnsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snapshot) => {
     if (!snapshot.exists) return;
     const room = snapshot.data();
-        if (room.status === 'playing' && room.hostTeam && room.guestTeam && !isInBattle) {
+    if (room.status === 'playing' && room.hostTeam && room.guestTeam && !isInBattle) {
       startOnlineBattle(room, isHostPlayer);
     }
     if (room.status === 'finished' && battleManager && !battleManager.gameOver) {
