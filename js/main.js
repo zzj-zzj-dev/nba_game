@@ -117,6 +117,27 @@ function saveToStorage() {
     lineupData[slot] = card ? card.id : null;
   }
   localStorage.setItem(GameConfig.LS_KEYS.LINEUP, JSON.stringify(lineupData));
+  
+  // 自动同步到云端（如果已登录）
+  autoCloudSave();
+}
+
+// 自动云端存档（静默，不弹提示）
+let _lastCloudSave = 0;
+function autoCloudSave() {
+  const now = Date.now();
+  if (now - _lastCloudSave < 3000) return; // 3秒内不重复存
+  if (typeof auth === 'undefined' || !auth || !auth.currentUser) return;
+  _lastCloudSave = now;
+  
+  const gd = {
+    coins: coins,
+    backpack: backpack.map(c => ({ id: c.id, masterId: c.masterId, stars: c.stars || 0, inLineup: c.inLineup || false })),
+    lineup: Object.fromEntries(SLOTS.map(s => [s, lineup[s] ? lineup[s].id : null]))
+  };
+  
+  fdb.collection('saves').doc(auth.currentUser.uid).set({ gameData: gd, updatedAt: new Date().toISOString() })
+    .catch(e => console.warn('[AutoSave] 云端存档失败:', e));
 }
 
 function loadFromStorage() {
