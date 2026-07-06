@@ -174,32 +174,19 @@ async function handleCreateRoom() {
   const username = currentUser?.email?.split('@')[0] || '玩家';
   
   try {
-    // 保存自己的阵容到房间
-    const myLineupData = {};
-    for (const slot of SLOTS) {
-      const card = lineup[slot];
-      myLineupData[slot] = card ? { id: card.id, masterId: card.masterId, stars: card.stars || 0 } : null;
-    }
-    
     await fdb.collection('rooms').doc(roomId).set({
       host: username,
       guest: null,
       hostReady: false,
       guestReady: false,
-      hostTeam: null,   // 房间创建后host确认阵容时填充
+      hostTeam: null,
       guestTeam: null,
       status: 'waiting',
-      hostLineup: myLineupData,
       createdAt: new Date()
     });
     
     hideModal();
-    showModal('房间已创建', `房间号: ${roomId}\n分享给好友加入\n准备开始游戏...`);
-    
-    // 立即弹出准备确认
-    setTimeout(() => {
-      showReadyConfirm(roomId, true);
-    }, 500);
+    showModal('房间已创建', `房间号: ${roomId}\n分享给好友加入`);
     
     isHostPlayer = true;
     currentRoomId = roomId;
@@ -209,6 +196,7 @@ async function handleCreateRoom() {
   }
 }
 
+
 function showReadyConfirm(roomId, isHost) {
   const modal = document.getElementById('modal-overlay');
   const title = document.getElementById('modal-title');
@@ -217,60 +205,19 @@ function showReadyConfirm(roomId, isHost) {
   const cancel = document.getElementById('modal-cancel');
   
   title.textContent = '⚔️ 准备开战';
-  body.innerHTML = '<p>入场费: 100金币</p><p>获胜奖励: 200金币</p><p>确定进入比赛吗？</p>';
+  body.innerHTML = '<p>获胜奖励: 100金币</p><p>点击准备表示同意</p>';
   
-  confirm.textContent = '💰 准备开战（-100金币）';
+  confirm.textContent = '✅ 我准备好了';
   confirm.onclick = async () => {
     modal.classList.add('hidden');
-    if (coins < 100) {
-      showModal('金币不足', '需要100金币入场费');
-      return;
-    }
-    // 先扣入场费
-    coins -= 100;
-    saveToStorage();
-    updateUI();
     
-    // 通知云端已准备
     const roomRef = fdb.collection('rooms').doc(roomId);
     if (isHost) {
-      // 构建host阵容
-      const homeTeam = createMatchPlayersFromLineup(lineup);
-      const teamData = homeTeam.map(p => ({
-        playerName: p.playerName, position: p.position, teamName: p.teamName,
-        isStarter: p.isStarter, isSubstitute: p.isSubstitute,
-        attrs: p.attrs
-      }));
-      await roomRef.update({ hostReady: true, hostTeam: teamData });
-      
-      // 等待guest也准备
-      showModal('已准备', '等待对手准备...');
-      const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
-        if (!snap.exists) return;
-        const room = snap.data();
-        if (room.guestReady && room.guestTeam) {
-          unsubscribe();
-          hideModal();
-          showModal('对手已就绪', '比赛开始！');
-          setTimeout(() => {
-            roomRef.update({ status: 'playing' });
-          }, 1000);
-        }
-      });
+      await roomRef.update({ hostReady: true });
+      showHostWaitingRoom(roomId);
     } else {
-      const guestTeam = createMatchPlayersFromLineup(lineup);
-      const teamData = guestTeam.map(p => ({
-        playerName: p.playerName, position: p.position, teamName: p.teamName,
-        isStarter: p.isStarter, isSubstitute: p.isSubstitute,
-        attrs: p.attrs
-      }));
-      await roomRef.update({ guestReady: true, guestTeam: teamData });
-      
-      // 如果host也已准备，直接开始
-      const snap = await roomRef.get();
-      if (snap.exists && snap.data().hostReady && snap.data().hostTeam) {
-        roomRef.update({ status: 'playing' });
-      }
+      await roomRef.update({ guestReady: true });
+      showModal('已准备', '已通知房主，等待比赛开始...');
     }
   };
   
@@ -278,6 +225,53 @@ function showReadyConfirm(roomId, isHost) {
   cancel.onclick = () => modal.classList.add('hidden');
   cancel.style.display = 'inline-block';
   modal.classList.remove('hidden');
+}
+
+function showHostWaitingRoom(roomId) {
+  const modal = document.getElementById('modal-overlay');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+  
+  title.textContent = '⏳ 等待对手准备';
+  body.innerHTML = '<div id="waiting-status"><p>你已准备 ✅</p><p id="guest-ready-status">对手: 未准备 ❌</p></div>';
+  
+  confirm.textContent = '⚔️ 开始游戏';
+  confirm.style.display = 'none';
+  confirm.onclick = async () => {
+    const myTeam = createMatchPlayersFromLineup(lineup);
+    const teamData = myTeam.map(p => ({
+      playerName: p.playerName, position: p.position, teamName: p.teamName,
+      isStarter: p.isStarter, isSubstitute: p.isSubstitute,
+      attrs: p.attrs
+    }));
+    
+    await fdb.collection('rooms').doc(roomId).update({ hostTeam: teamData, status: 'playing' });
+    hideModal();
+  };
+  
+  cancel.textContent = '离开房间';
+  cancel.onclick = () => {
+    fdb.collection('rooms').doc(roomId).delete().catch(() => {});
+    if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
+    currentRoomId = null;
+    modal.classList.add('hidden');
+  };
+  modal.classList.remove('hidden');
+  
+  const unsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snap) => {
+    if (!snap.exists) return;
+    const room = snap.data();
+    const guestStatus = document.getElementById('guest-ready-status');
+    if (room.guestReady) {
+      if (guestStatus) guestStatus.innerHTML = '对手: 已准备 ✅';
+      confirm.style.display = 'inline-block';
+    } else {
+      if (guestStatus) guestStatus.innerHTML = '对手: 未准备 ❌';
+      confirm.style.display = 'none';
+    }
+  });
 }
 
 async function handleJoinRoom(roomId) {
@@ -300,7 +294,6 @@ async function handleJoinRoom(roomId) {
     currentRoomId = roomId;
     listenRoom(roomId);
     
-    // 弹出准备确认
     setTimeout(() => {
       showReadyConfirm(roomId, false);
     }, 500);
@@ -314,23 +307,26 @@ function listenRoom(roomId) {
   roomUnsubscribe = fdb.collection('rooms').doc(roomId).onSnapshot((snapshot) => {
     if (!snapshot.exists) return;
     const room = snapshot.data();
-    if (room.status === 'playing' && room.hostTeam && room.guestTeam && !isInBattle) {
-      // 比赛开始 - 入场费已在准备时扣除
+        if (room.status === 'playing' && room.hostTeam && room.guestTeam && !isInBattle) {
       startOnlineBattle(room, isHostPlayer);
     }
     if (room.status === 'finished' && battleManager && !battleManager.gameOver) {
-      // 对方已结束比赛（比如掉线了自己赢了）
-      if (isHostPlayer) {
-        // host端已处理
+      // 对方先结束了比赛，自己弹结算（不重复发奖励）
+      battleManager.gameOver = true;
+      const isHomeWinner = battleManager.homeScore >= Constants.WIN_SCORE;
+      if (isHomeWinner) {
+        addLogMessage('🏆 你赢了！+100金币！', 'reward');
+        showModal('🎉 胜利！', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n获得 100 金币！`);
       } else {
-        // guest端手动触发结算
-        if (battleManager && !battleManager.gameOver) {
-          battleManager.gameOver = true;
-          // guest视角：自己是主场，如果homeScore >= WIN_SCORE则guest赢
-          addLogMessage('🏆 比赛结束！', 'game_end');
-          handleOnlineResult(room, false);
-        }
+        addLogMessage('💔 你输了！', 'game_end');
+        showModal('💔 失败', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n下次加油！`);
       }
+      isInBattle = false;
+      setTimeout(() => {
+        exitBattle();
+        if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
+        currentRoomId = null;
+      }, 3000);
     }
   });
 }
@@ -407,15 +403,15 @@ function handleOnlineResult(room, isHost) {
   if (!battleManager) return;
   
   const isHomeWinner = battleManager.homeScore >= Constants.WIN_SCORE;
-  const reward = 200;
+  const reward = 100;
   
   if (isHomeWinner) {
     // 自己赢了
     coins += reward;
     saveToStorage();
     updateUI();
-    addLogMessage(`🏆 你赢了！+200金币！`, 'reward');
-    showModal('🎉 胜利！', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n获得 200 金币！`);
+    addLogMessage(`🏆 你赢了！+100金币！`, 'reward');
+    showModal('🎉 胜利！', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n获得 100 金币！`);
   } else {
     // 自己输了
     addLogMessage(`💔 你输了！`, 'game_end');
