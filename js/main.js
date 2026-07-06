@@ -507,11 +507,12 @@ function showPlayerDetail(card) {
   const attrLabels = {
     midRangeShot: '中投', drive: '突破', post: '篮下',
     threePointAttack: '三分', playmaking: '组织',
-    perimeterDefense: '外防', interiorDefense: '内防', rebounding: '篮板'
+    perimeterDefense: '外防', interiorDefense: '内防', rebounding: '篮板',
+    stamina: '体力'
   };
   
   let attrHTML = '';
-  const attrOrder = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding'];
+  const attrOrder = ['midRangeShot','drive','post','threePointAttack','playmaking','perimeterDefense','interiorDefense','rebounding','stamina'];
   for (const key of attrOrder) {
     const val = master.attrs[key] || 60;
     const starBonus = (card.stars || 0) * GameConfig.FUSION.ATTR_BONUS_PER_STAR;
@@ -540,6 +541,7 @@ function showPlayerDetail(card) {
     <div class="detail-attrs">${attrHTML}</div>
     ${inLineup ? '' : `<div class="detail-actions">
       <button class="btn btn-danger" onclick="decomposeCard('${card.id}');closePlayerDetail();">分解 (${GameConfig.DECOMPOSE[master.tier]}金币)</button>
+      <button class="btn btn-warning" onclick="showSwapModal('${card.id}');closePlayerDetail();">置换 (${GameConfig.SWAP_COST[master.tier]}金币)</button>
       <button class="btn btn-primary" onclick="showFusionModal('${card.id}');closePlayerDetail();">融合升星</button>
     </div>`}
   `;
@@ -690,11 +692,7 @@ function showSwapModal(cardId) {
 // ===================== 阵容完整性检查 =====================
 function isLineupComplete() {
   const starters = ['pg','sg','sf','pf','c'];
-  const bench = ['bench1','bench2','bench3'];
   for (const s of starters) {
-    if (!lineup[s]) return false;
-  }
-  for (const s of bench) {
     if (!lineup[s]) return false;
   }
   return true;
@@ -707,7 +705,7 @@ function getLineupOverall() {
 // ===================== 对战系统 =====================
 function startBattle(difficulty) {
   if (!isLineupComplete()) {
-    showModal('提示', '请先配置完整阵容（5首发+3替补）再开始对战！');
+    showModal('提示', '请先配置完整阵容（5首发）再开始对战！');
     switchTab('roster');
     return;
   }
@@ -727,30 +725,34 @@ function startBattle(difficulty) {
   const homeTeam = createMatchPlayersFromLineup(lineup);
   const awayTeam = generateRandomTeam('AI ' + config.label, difficulty);
   
-  // 处理没生成完整的情况
+  // 确保有足够球员（填充到8人）
   while (homeTeam.length < 8) {
-    const placeholder = createPlayer({
-      id: 'ph_' + homeTeam.length,
+    const fillIdx = homeTeam.length;
+    const fillPos = ['PG','SG','SF','PF','C'][fillIdx % 5];
+    const ph = createPlayer({
+      id: 'ph_' + fillIdx,
       playerName: '替补球员',
-      position: ['PG','SG','SF','PF','C'][homeTeam.length % 5],
+      position: fillPos,
       teamName: '主场',
-      isStarter: homeTeam.length < 5,
-      isSubstitute: homeTeam.length >= 5,
-      attrs: { midRangeShot:60, drive:60, post:60, threePointAttack:60, playmaking:60, perimeterDefense:60, interiorDefense:60, rebounding:60 }
+      isStarter: fillIdx < 5,
+      isSubstitute: fillIdx >= 5,
+      attrs: { midRangeShot:60, drive:60, post:60, threePointAttack:60, playmaking:60, perimeterDefense:60, interiorDefense:60, rebounding:60, stamina:60 }
     });
-    homeTeam.push(placeholder);
+    homeTeam.push(ph);
   }
   while (awayTeam.length < 8) {
-    const ph = getMasterDB()[Math.floor(Math.random() * getMasterDB().length)];
-    if (ph) {
-      const cp = createPlayerFromMaster(ph.id);
-      if (cp) {
-        cp.isStarter = awayTeam.length < 5;
-        cp.isSubstitute = awayTeam.length >= 5;
-        cp.teamName = 'AI队';
-        awayTeam.push(cp);
-      }
-    } else break;
+    const fillIdx = awayTeam.length;
+    const fillPos = ['PG','SG','SF','PF','C'][fillIdx % 5];
+    const ph = createPlayer({
+      id: 'ph_away_' + fillIdx,
+      playerName: 'AI替补',
+      position: fillPos,
+      teamName: config.label,
+      isStarter: fillIdx < 5,
+      isSubstitute: fillIdx >= 5,
+      attrs: { midRangeShot:55, drive:55, post:55, threePointAttack:55, playmaking:55, perimeterDefense:55, interiorDefense:55, rebounding:55, stamina:60 }
+    });
+    awayTeam.push(ph);
   }
   
   // 初始化比赛（沿用原BattleManager）
@@ -875,10 +877,11 @@ function createPlayerCard(player, isHome, isBench) {
       <div class="stamina-bar"><div class="stamina-bar-fill ${staminaClass}" style="width:${staminaPct}%"></div></div>
     </div>
     <div class="player-attrs">
-      <span class="attr-mini">🏀${player.attrs.midRangeShot || '?'}</span>
-      <span class="attr-mini">💨${player.attrs.drive || '?'}</span>
-      <span class="attr-mini">🏋️${player.attrs.post || '?'}</span>
-      <span class="attr-mini">🎯${player.attrs.threePointAttack || '?'}</span>
+      <span class="attr-mini" title="中投">🏀${player.attrs.midRangeShot || '?'}</span>
+      <span class="attr-mini" title="突破">💨${player.attrs.drive || '?'}</span>
+      <span class="attr-mini" title="篮下">🏋️${player.attrs.post || '?'}</span>
+      <span class="attr-mini" title="三分">🎯${player.attrs.threePointAttack || '?'}</span>
+      <span class="attr-mini" title="体力">⚡${player.attrs.stamina || '?'}</span>
     </div>
     ${badges}${subBonus}${synergy}
   `;
@@ -1312,7 +1315,7 @@ function updateUI() {
       battleStatus.style.color = '#4caf50';
       document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'auto');
     } else {
-      battleStatus.textContent = '⚠️ 请先配置完整阵容（5首发+3替补）';
+      battleStatus.textContent = '⚠️ 请先配置完整阵容（5首发）';
       battleStatus.style.color = '#f44336';
       document.querySelectorAll('.difficulty-card').forEach(c => c.style.pointerEvents = 'none');
     }

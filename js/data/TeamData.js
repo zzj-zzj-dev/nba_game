@@ -6,26 +6,24 @@
 // 生成随机球队（用于人机对战AI）
 function generateRandomTeam(name, difficulty = 'normal') {
   const db = getMasterDB();
-  if (!db || db.length === 0) return { home: [], away: [] };
+  if (!db || db.length === 0) return [];
 
   // 根据难度确定阵容质量
-  let tierWeights;
-  switch(difficulty) {
-    case 'easy':  tierWeights = { GOAT: 0, SSR: 0.1, SR: 0.4, R: 0.3, N: 0.2 }; break;
-    case 'normal': tierWeights = { GOAT: 0.05, SSR: 0.25, SR: 0.4, R: 0.2, N: 0.1 }; break;
-    case 'hard':  tierWeights = { GOAT: 0.2, SSR: 0.4, SR: 0.3, R: 0.07, N: 0.03 }; break;
-    default:      tierWeights = { GOAT: 0.05, SSR: 0.25, SR: 0.4, R: 0.2, N: 0.1 };
-  }
+  const tierWeightsMap = {
+    'easy':   { GOAT: 0, SSR: 0.1, SR: 0.4, R: 0.3, N: 0.2 },
+    'normal': { GOAT: 0.05, SSR: 0.25, SR: 0.4, R: 0.2, N: 0.1 },
+    'hard':   { GOAT: 0.2, SSR: 0.4, SR: 0.3, R: 0.07, N: 0.03 },
+  };
+  const tierWeights = tierWeightsMap[difficulty] || tierWeightsMap.normal;
 
-  // 按位置抽取
+  // 按位置抽取（5首发 + 3替补）
   const positions = ['PG', 'SG', 'SF', 'PF', 'C'];
-  const benchPositions = ['PG', 'SG', 'SF', 'PF', 'C'];
+  const benchPositions = ['PG', 'SG', 'SF'];
 
-  const starters = [];
-  const bench = [];
-
-  // 抽取首发
   const usedIds = new Set();
+  const starters = [];
+
+  // 每个位置抽首发
   for (const pos of positions) {
     const player = pickPlayerForPosition(pos, tierWeights, usedIds);
     if (player) {
@@ -34,10 +32,10 @@ function generateRandomTeam(name, difficulty = 'normal') {
     }
   }
 
-  // 抽取替补（3人，从剩下位置选）
-  const benchPicks = ['PG', 'SG', 'SF']; // 替补优先选外线
+  // 替补（3人）
+  const bench = [];
   for (let i = 0; i < 3; i++) {
-    const pos = benchPositions[i % benchPositions.length];
+    const pos = benchPositions[i];
     const player = pickPlayerForPosition(pos, tierWeights, usedIds);
     if (player) {
       usedIds.add(player.id);
@@ -45,17 +43,14 @@ function generateRandomTeam(name, difficulty = 'normal') {
     }
   }
 
-  // 如果没有足够球员，补位
+  // 创建球队数组
   const allPlayers = [...starters, ...bench];
-  const totalPlayers = GameConfig.TEAM.TOTAL;
-
-  // 创建球队
   const team = [];
   allPlayers.forEach((p, i) => {
     const cp = createPlayerFromMaster(p.id);
     if (cp) {
-      cp.isStarter = i < GameConfig.TEAM.STARTERS;
-      cp.isSubstitute = i >= GameConfig.TEAM.STARTERS;
+      cp.isStarter = i < 5;
+      cp.isSubstitute = i >= 5;
       cp.teamName = name;
       team.push(cp);
     }
@@ -67,10 +62,9 @@ function generateRandomTeam(name, difficulty = 'normal') {
 // 按位置和档位权重随机选球员
 function pickPlayerForPosition(pos, tierWeights, usedIds) {
   const db = getMasterDB();
-  // 可选球员（可打该位置的，未使用的）
   let candidates = db.filter(p => p.positions.includes(pos) && !usedIds.has(p.id));
   if (candidates.length === 0) {
-    candidates = db.filter(p => !usedIds.has(p.id)).slice(0, 5);
+    candidates = db.filter(p => !usedIds.has(p.id)).slice(0, 10);
   }
   if (candidates.length === 0) return null;
 
@@ -83,7 +77,7 @@ function pickPlayerForPosition(pos, tierWeights, usedIds) {
     if (r <= cum) { selectedTier = tier; break; }
   }
 
-  // 从该档位选（若无则降低档位）
+  // 找该档位可用球员
   let pool = candidates.filter(p => p.tier === selectedTier);
   let tries = 0;
   while (pool.length === 0 && tries < 5) {
@@ -96,55 +90,91 @@ function pickPlayerForPosition(pos, tierWeights, usedIds) {
   }
   if (pool.length === 0) pool = candidates;
 
-  // 随机选一个
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// 从背包阵容创建比赛用球员
+/**
+ * 从阵容（card对象）创建比赛用球员列表
+ * lineup格式: { pg: cardObj, sg: cardObj, ..., bench1: cardObj, ... }
+ * cardObj格式: { id, masterId, stars, inLineup }
+ */
 function createMatchPlayersFromLineup(lineup) {
   const team = [];
   const allSlots = ['pg','sg','sf','pf','c','bench1','bench2','bench3'];
+  const lsKeys = Object.keys(localStorage);
+  
+  // 如果是刚加载，lineup存的是card对象
+  // 如果是旧格式，lineup[slot] = card对象
   allSlots.forEach((slot, i) => {
-    const cardId = lineup[slot];
-    if (cardId) {
-      const card = getBackpackCardById(cardId);
-      if (card) {
-        const cp = createPlayerFromMaster(card.masterId);
-        if (cp) {
-          cp.isStarter = i < GameConfig.TEAM.STARTERS;
-          cp.isSubstitute = i >= GameConfig.TEAM.STARTERS;
-          cp.id = card.id;
-          // 应用星级加成
-          if (card.stars && card.stars > 0) {
-            const bonus = card.stars * GameConfig.FUSION.ATTR_BONUS_PER_STAR;
-            for (const key of Object.keys(cp.attrs)) {
-              cp.attrs[key] += bonus;
-            }
-          }
-          team.push(cp);
+    const card = lineup[slot];
+    if (!card) return;
+    
+    // 从master创建球员
+    const cp = createPlayerFromMaster(card.masterId);
+    if (!cp) return;
+    
+    cp.isStarter = i < 5;
+    cp.isSubstitute = i >= 5;
+    cp.id = card.id;
+    
+    // 应用星级加成
+    const starBonus = (card.stars || 0) * (GameConfig ? GameConfig.FUSION.ATTR_BONUS_PER_STAR : 2);
+    if (starBonus > 0) {
+      for (const key of Object.keys(cp.attrs)) {
+        cp.attrs[key] += starBonus;
+      }
+    }
+    
+    // 应用位置惩罚（首发）
+    if (!slot.startsWith('bench')) {
+      const slotPos = slot.toUpperCase();
+      const master = getMasterById(card.masterId);
+      if (master && !master.positions.includes(slotPos)) {
+        const penalty = (GameConfig ? GameConfig.POSITION_PENALTY : 0.10);
+        for (const key of Object.keys(cp.attrs)) {
+          cp.attrs[key] = Math.round(cp.attrs[key] * (1 - penalty));
         }
       }
     }
+    
+    team.push(cp);
   });
+  
   return team;
 }
 
-// 计算阵容总评
+/**
+ * 计算阵容总评（9属性加权平均）
+ * 位置不适配时总评扣10%
+ */
 function calcLineupOverall(lineup) {
+  const starters = ['pg','sg','sf','pf','c'];
   let total = 0;
   let count = 0;
-  const allSlots = ['pg','sg','sf','pf','c','bench1','bench2','bench3'];
-  allSlots.forEach(slot => {
-    const cardId = lineup[slot];
-    if (cardId) {
-      const card = getBackpackCardById(cardId);
-      if (card) {
-        const base = card.overall || 80;
-        const starBonus = (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR;
-        total += base + starBonus;
-        count++;
-      }
+  
+  for (const slot of starters) {
+    const card = lineup[slot];
+    if (!card) continue;
+    
+    const master = getMasterById(card.masterId);
+    if (!master) continue;
+    
+    const slotPos = slot.toUpperCase();
+    const isMatch = master.positions.includes(slotPos);
+    const penalty = isMatch ? 0 : (GameConfig ? GameConfig.POSITION_PENALTY : 0.10);
+    const starBonus = (card.stars || 0) * (GameConfig ? GameConfig.FUSION.ATTR_BONUS_PER_STAR : 2);
+    
+    // 计算带星级加成的属性
+    const attrs = {};
+    for (const [k, v] of Object.entries(master.attrs)) {
+      attrs[k] = Math.min(99, v + starBonus);
     }
-  });
+    
+    const ovr = calcOverall(attrs);
+    const finalOvr = Math.round(ovr * (1 - penalty));
+    total += finalOvr;
+    count++;
+  }
+  
   return count > 0 ? Math.round(total / count) : 0;
 }
