@@ -1025,13 +1025,18 @@ function executeAttack(attackType) {
   }
   
   if (attackType === 'assist') {
-    // 助攻需要选接球者
     showAssistSelect(selectedAttacker, defender);
     return;
   }
   
-  const result = battleManager.executeRound(selectedAttacker, attackType, defender);
-  if (result) addLogMessage(result.message, result.type);
+  // 联机模式使用联机回合逻辑
+  if (typeof executeOnlineRound === 'function' && currentRoomId) {
+    const result = executeOnlineRound(selectedAttacker, attackType, defender);
+    if (result) addLogMessage(result.message, result.type);
+  } else {
+    const result = battleManager.executeRound(selectedAttacker, attackType, defender);
+    if (result) addLogMessage(result.message, result.type);
+  }
   
   renderBattleUI();
   updateScoreboard();
@@ -1058,8 +1063,13 @@ function showAssistSelect(passer, initialDefender) {
     card.innerHTML = `<div>${p.playerName} (${p.position})</div>`;
     card.onclick = () => {
       isProcessing = false;
-      const result = battleManager.executeAssistRound(passer, p, initialDefender);
-      if (result) addLogMessage(result.message, result.type);
+      // 联机模式使用联机助攻逻辑
+      if (typeof executeOnlineAssistRound === 'function' && currentRoomId) {
+        executeOnlineAssistRound(passer, p, initialDefender);
+      } else {
+        const result = battleManager.executeAssistRound(passer, p, initialDefender);
+        if (result) addLogMessage(result.message, result.type);
+      }
       renderBattleUI();
       updateScoreboard();
       updateGameInfo();
