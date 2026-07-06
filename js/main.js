@@ -24,9 +24,9 @@ function initGame() {
   console.log('NBA卡牌对战初始化...');
   loadFromStorage();
   
-  // 检查是否首次进入（开局福利）
+  // 检查是否首次进入且背包为空（开局福利）
   const freeClaimed = localStorage.getItem(GameConfig.LS_KEYS.FREE_PACKS_CLAIMED);
-  if (!freeClaimed) {
+  if (!freeClaimed && backpack.length === 0) {
     setTimeout(() => showFreePackModal(), 500);
   }
   
@@ -703,6 +703,7 @@ function getLineupOverall() {
 
 // ===================== 对战系统 =====================
 function startBattle(difficulty) {
+  try {
   if (!isLineupComplete()) {
     showModal('提示', '请先配置完整阵容（5首发）再开始对战！');
     switchTab('roster');
@@ -775,6 +776,11 @@ function startBattle(difficulty) {
     'homeBench:', document.getElementById('home-bench')?.children.length);
   bindBattleEvents();
   resetActionState();
+  } catch(e) {
+    console.error('[Battle] Error in startBattle:', e);
+    alert('对战初始化出错: ' + e.message);
+    isInBattle = false;
+  }
 }
 
 function exitBattle() {
