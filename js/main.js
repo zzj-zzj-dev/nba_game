@@ -960,6 +960,12 @@ function updateSubstitutionsDisplay() {
 function handlePlayerClick(player, isHome) {
   if (isProcessing || !battleManager || battleManager.gameOver) return;
   
+  // 联机模式下非自己回合不能操作
+  if (typeof onlineGame !== 'undefined' && currentRoomId && !onlineGame.myTurn) {
+    addLogMessage('⏳ 不是你的回合，请等待对手操作', 'system');
+    return;
+  }
+  
   const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
   
   if (isHomeOffense) {
@@ -1031,13 +1037,14 @@ function executeAttack(attackType) {
   
   // 联机模式使用联机回合逻辑
   if (typeof executeOnlineRound === 'function' && currentRoomId) {
+    if (!onlineGame.myTurn) {
+      addLogMessage('⏳ 不是你的回合，请等待对手操作', 'system');
+      isProcessing = false;
+      return;
+    }
     const result = executeOnlineRound(selectedAttacker, attackType, defender);
     if (result) {
       addLogMessage(result.message, result.type);
-    } else if (!onlineGame.myTurn) {
-      // 不是自己的回合，不执行后续渲染
-      isProcessing = false;
-      return;
     }
   } else {
     const result = battleManager.executeRound(selectedAttacker, attackType, defender);
@@ -1071,6 +1078,11 @@ function showAssistSelect(passer, initialDefender) {
       isProcessing = false;
       // 联机模式使用联机助攻逻辑
       if (typeof executeOnlineAssistRound === 'function' && currentRoomId) {
+        if (!onlineGame.myTurn) {
+          addLogMessage('⏳ 不是你的回合', 'system');
+          modal.classList.add('hidden');
+          return;
+        }
         executeOnlineAssistRound(passer, p, initialDefender);
       } else {
         const result = battleManager.executeAssistRound(passer, p, initialDefender);
@@ -1103,10 +1115,17 @@ function resetActionState() {
     return;
   }
   
+  // 联机模式下，非自己回合隐藏操作区
+  if (typeof onlineGame !== 'undefined' && onlineGame.myTurn === false && currentRoomId) {
+    playerSelectEl.classList.add('hidden');
+    attackTypeSelectEl.classList.add('hidden');
+    actionTitle.textContent = '⏳ 等待对手操作...';
+    return;
+  }
+  
   const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
   if (isHomeOffense) {
     actionTitle.textContent = '🎯 选择进攻球员';
-    // 渲染进攻球员选择
     renderAttackerSelect();
   } else {
     actionTitle.textContent = '🛡️ 选择防守球员';
