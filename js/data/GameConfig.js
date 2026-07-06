@@ -50,7 +50,7 @@ const GameConfig = {
   // ===== 融合升星 =====
   FUSION: {
     ATTR_BONUS_PER_STAR: 2,     // 每次融合全属性+2
-    OVERALL_BONUS_PER_STAR: 2,  // 每次融合总评+2
+    OVERALL_BONUS_PER_STAR: 1,  // 每升1星总评+1
   },
 
   // ===== 位置惩罚 =====

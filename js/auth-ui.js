@@ -104,9 +104,9 @@ async function saveGame() {
   
   try {
     await fdb.collection('saves').doc(auth.currentUser.uid).set({ gameData, updatedAt: new Date() });
-    showModal('保存成功', '游戏数据已保存到云端');
+    if (!window._silentSave) showModal('保存成功', '游戏数据已保存到云端');
   } catch(e) {
-    showModal('保存失败', e.message);
+    if (!window._silentSave) showModal('保存失败', e.message);
   }
 }
 
@@ -129,9 +129,9 @@ async function loadGame() {
     
     saveToStorage();
     updateUI();
-    showModal('加载成功', '存档已加载');
+    if (!window._silentLoad) showModal('加载成功', '存档已加载');
   } catch(e) {
-    showModal('加载失败', e.message);
+    if (!window._silentLoad) showModal('加载失败', e.message);
   }
 }
 

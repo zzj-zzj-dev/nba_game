@@ -33,9 +33,16 @@ function initGame() {
   updateUI();
   bindEvents();
   
-  // 初始化登录系统
+  // 初始化登录系统（登录后自动加载云端存档）
   if (typeof initAuthUI === 'function') {
     initAuthUI();
+    // 登录后延迟自动读取存档（静默）
+    setTimeout(() => {
+      if (typeof auth !== 'undefined' && auth && auth.currentUser) {
+        window._silentLoad = true;
+        loadGame().then(() => { window._silentLoad = false; }).catch(() => { window._silentLoad = false; });
+      }
+    }, 1500);
   }
   
   console.log('初始化完成！金币:', coins, '背包:', backpack.length);
@@ -759,6 +766,10 @@ function startBattle(difficulty) {
   });
   
   renderBattleUI();
+  console.log('[Battle] renderBattleUI done. homePlayersEl hasChildren:', 
+    document.getElementById('home-players')?.children.length,
+    'awayPlayersEl:', document.getElementById('away-players')?.children.length,
+    'homeBench:', document.getElementById('home-bench')?.children.length);
   bindBattleEvents();
   resetActionState();
 }
@@ -1437,7 +1448,21 @@ function getLineupAnalysis() {
 }
 
 function bindEvents() {
-  // 避免重新绑定
+  // 添加存档按钮事件
+  const btnSave = document.getElementById('btn-save');
+  const btnLoad = document.getElementById('btn-load');
+  if (btnSave) btnSave.onclick = () => { if (typeof saveGame === 'function') saveGame(); else showModal('提示', '请先登录'); };
+  if (btnLoad) btnLoad.onclick = () => { if (typeof loadGame === 'function') loadGame(); else showModal('提示', '请先登录'); };
+}
+
+// 自动加载存档（登录后调用）
+function autoLoadGame() {
+  if (typeof loadGame === 'function') {
+    // 静默加载（不弹成功提示）
+    const originalModal = window.showModal;
+    window.showModal = function(t, m, cb) { if (t === '加载成功') { if (cb) cb(); } else { originalModal(t, m, cb); } };
+    loadGame().finally(() => { window.showModal = originalModal; });
+  }
 }
 
 // ===================== 启动 =====================
