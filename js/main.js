@@ -724,6 +724,9 @@ function startBattle(difficulty) {
   const homeTeam = createMatchPlayersFromLineup(lineup);
   const awayTeam = generateRandomTeam('AI ' + config.label, difficulty);
   
+  console.log('[Battle] homeTeam count:', homeTeam.length, 'awayTeam count:', awayTeam.length);
+  console.log('[Battle] lineup:', JSON.stringify(Object.keys(lineup).map(s => ({slot:s, card:lineup[s]?.id, masterId:lineup[s]?.masterId}))));
+  
   // 确保有足够球员（填充到8人）
   while (homeTeam.length < 8) {
     const fillIdx = homeTeam.length;
@@ -1314,7 +1317,7 @@ function updateUI() {
   const overall = document.getElementById('homeOverall');
   if (overall) {
     const ov = getLineupOverall();
-    overall.textContent = ov + '分';
+    overall.textContent = ov;
   }
   
   // 阵容总评详情 - 影响因素
@@ -1422,8 +1425,9 @@ function getLineupAnalysis() {
   
   let html = '<div style="font-size:0.85em;color:#aaa;line-height:1.6;">';
   
-  // 9项平均能力
-  html += '<div style="color:#ffd700;font-weight:bold;margin-bottom:4px;">评分: ' + totalScore + '</div>';
+  // 阵容总评（使用calcLineupOverall保持一致）
+  const lineTotalScore = (typeof calcLineupOverall === 'function') ? calcLineupOverall(lineup) : totalScore;
+  html += '<div style="color:#ffd700;font-weight:bold;margin-bottom:4px;">评分: ' + lineTotalScore + '</div>';
   html += '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:4px;">';
   html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">三分:' + avgThree + '</span>';
   html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">中投:' + avgMid + '</span>';

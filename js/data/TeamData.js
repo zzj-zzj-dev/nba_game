@@ -144,13 +144,12 @@ function createMatchPlayersFromLineup(lineup) {
 }
 
 /**
- * 计算阵容总评（9属性加权平均）
+ * 计算阵容总评（首发球员 overall 平均值）
  * 位置不适配时总评扣10%
  */
 function calcLineupOverall(lineup) {
   const starters = ['pg','sg','sf','pf','c'];
-  let count = 0;
-  let spaceSum = 0, defSum = 0, paintSum = 0;
+  let total = 0, count = 0;
   
   for (const slot of starters) {
     const card = lineup[slot];
@@ -159,27 +158,21 @@ function calcLineupOverall(lineup) {
     const master = getMasterById(card.masterId);
     if (!master) continue;
     
-    const a = master.attrs;
+    let ovr = master.overall;
     
-    // 中投三分综合值 = 三分*0.7 + 中投*0.3
-    const spaceVal = (a.threePointAttack || 60) * 0.7 + (a.midRangeShot || 60) * 0.3;
-    // 攻框综合值 = 突破*0.5 + 组织*0.5
-    const paintVal = (a.drive || 60) * 0.5 + (a.playmaking || 60) * 0.5;
-    // 防守综合值 = 外防 + 内防
-    const defVal = (a.perimeterDefense || 60) + (a.interiorDefense || 60);
+    // 位置不适配扣10%
+    const slotPos = slot.toUpperCase();
+    if (!master.positions.includes(slotPos)) {
+      ovr = Math.round(ovr * (1 - (GameConfig ? GameConfig.POSITION_PENALTY : 0.10)));
+    }
     
-    spaceSum += spaceVal;
-    defSum += defVal;
-    paintSum += paintVal;
+    // 加上星级加成
+    ovr += (card.stars || 0) * (GameConfig ? GameConfig.FUSION.OVERALL_BONUS_PER_STAR : 1);
+    
+    total += ovr;
     count++;
   }
   
   if (count === 0) return 0;
-  
-  const avgSpace = spaceSum / count;
-  const avgDef = defSum / count;
-  const avgPaint = paintSum / count;
-  
-  // 总阵容评分 = round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25)
-  return Math.round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25);
+  return Math.round(total / count);
 }
