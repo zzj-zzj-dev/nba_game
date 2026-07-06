@@ -1329,102 +1329,99 @@ function updateLineupDisplay() {
 
 // ===================== 键盘快捷键 =====================
 
-// ===================== 阵容分析系统 =====================
+// ===================== 阵容评分系统（新公式） =====================
 function getLineupAnalysis() {
   const starters = ['pg','sg','sf','pf','c'];
-  let totalOvr = 0, count = 0;
+  let count = 0;
+  let spaceSum = 0, defSum = 0, paintSum = 0;
   let midSum = 0, driveSum = 0, postSum = 0, threeSum = 0;
   let playSum = 0, perimSum = 0, interSum = 0, rebSum = 0;
-  let mismatchCount = 0;
   
   for (const slot of starters) {
     const card = lineup[slot];
     if (!card) continue;
     const master = getMasterById(card.masterId);
     if (!master) continue;
-    const starBonus = (card.stars || 0) * GameConfig.FUSION.OVERALL_BONUS_PER_STAR;
-    const slotPos = slot.toUpperCase();
-    const isMismatch = !master.positions.includes(slotPos);
-    const penalty = isMismatch ? 0.1 : 0;
-    const ovr = Math.round(master.overall * (1 - penalty)) + starBonus;
-    totalOvr += ovr;
-    count++;
-    if (isMismatch) mismatchCount++;
     
-    midSum += master.attrs.midRangeShot || 60;
-    driveSum += master.attrs.drive || 60;
-    postSum += master.attrs.post || 60;
-    threeSum += master.attrs.threePointAttack || 60;
-    playSum += master.attrs.playmaking || 60;
-    perimSum += master.attrs.perimeterDefense || 60;
-    interSum += master.attrs.interiorDefense || 60;
-    rebSum += master.attrs.rebounding || 60;
+    const a = master.attrs;
+    
+    // 1. 中投三分综合值 = 三分 * 0.7 + 中投 * 0.3
+    const spaceVal = (a.threePointAttack || 60) * 0.7 + (a.midRangeShot || 60) * 0.3;
+    // 2. 攻框综合值 = 突破 * 0.5 + 组织 * 0.5（drive + playmaking）
+    const paintVal = (a.drive || 60) * 0.5 + (a.playmaking || 60) * 0.5;
+    // 3. 防守综合值 = 外防 + 内防
+    const defVal = (a.perimeterDefense || 60) + (a.interiorDefense || 60);
+    
+    spaceSum += spaceVal;
+    defSum += defVal;
+    paintSum += paintVal;
+    
+    midSum += a.midRangeShot || 60;
+    driveSum += a.drive || 60;
+    postSum += a.post || 60;
+    threeSum += a.threePointAttack || 60;
+    playSum += a.playmaking || 60;
+    perimSum += a.perimeterDefense || 60;
+    interSum += a.interiorDefense || 60;
+    rebSum += a.rebounding || 60;
+    
+    count++;
   }
   
   if (count === 0) return '尚未配置阵容';
   
-  const avgOvr = Math.round(totalOvr / count);
-  const avgThree = threeSum / count;
-  const avgMid = midSum / count;
-  const avgDrive = driveSum / count;
-  const avgPost = postSum / count;
-  const avgPlay = playSum / count;
-  const avgPerim = perimSum / count;
-  const avgInter = interSum / count;
-  const avgReb = rebSum / count;
+  const avgSpace = spaceSum / count;
+  const avgDef = defSum / count;
+  const avgPaint = paintSum / count;
   
-  let details = [];
-  let deductions = [];
+  const avgMid = Math.round(midSum / count);
+  const avgDrive = Math.round(driveSum / count);
+  const avgPost = Math.round(postSum / count);
+  const avgThree = Math.round(threeSum / count);
+  const avgPlay = Math.round(playSum / count);
+  const avgPerim = Math.round(perimSum / count);
+  const avgInter = Math.round(interSum / count);
+  const avgReb = Math.round(rebSum / count);
   
-  // 空间能力（三分+中投）
-  const spaceScore = (avgThree + avgMid) / 2;
-  if (spaceScore >= 85) deductions.push('空间能力出色 +加分');
-  else if (spaceScore >= 75) deductions.push('空间能力良好');
-  else if (spaceScore >= 65) deductions.push('空间能力一般');
-  else deductions.push('空间能力不佳 -扣分');
+  // 总阵容评分 = round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25)
+  const totalScore = Math.round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25);
   
-  // 外线火力（三分）
-  if (avgThree >= 85) deductions.push('外线火力凶猛 +加分');
-  else if (avgThree >= 70) deductions.push('外线火力充足');
-  else if (avgThree < 60) deductions.push('外线火力不足 -扣分');
+  // 评分分析
+  let factors = [];
   
-  // 内线得分（篮下+突破）
-  const insideScore = (avgPost + avgDrive) / 2;
-  if (insideScore >= 85) deductions.push('内线杀伤力强 +加分');
-  else if (insideScore >= 70) deductions.push('内线能力良好');
-  else deductions.push('内线能力偏弱 -扣分');
+  if (avgSpace >= 80) factors.push(['空间投射出色', true]);
+  else if (avgSpace >= 65) factors.push(['空间投射一般', false]);
+  else factors.push(['空间投射不佳', null]);
   
-  // 防守能力（内防+外防）
-  const defScore = (avgInter + avgPerim) / 2;
-  if (defScore >= 85) deductions.push('防守坚固 +加分');
-  else if (defScore >= 75) deductions.push('防守可靠');
-  else if (defScore >= 65) deductions.push('防守一般');
-  else deductions.push('防守薄弱 -扣分');
+  if (avgDef >= 160) factors.push(['防守坚固', true]);
+  else if (avgDef >= 130) factors.push(['防守一般', false]);
+  else factors.push(['防守薄弱', null]);
   
-  // 篮板能力
-  if (avgReb >= 85) deductions.push('篮板统治力强 +加分');
-  else if (avgReb >= 70) deductions.push('篮板能力良好');
-  else deductions.push('篮板能力偏弱 -扣分');
+  if (avgPaint >= 80) factors.push(['攻框能力强', true]);
+  else if (avgPaint >= 65) factors.push(['攻框能力一般', false]);
+  else factors.push(['攻框能力弱', null]);
   
-  // 组织能力
-  if (avgPlay >= 85) deductions.push('组织流畅 +加分');
-  else if (avgPlay >= 70) deductions.push('组织能力良好');
-  else deductions.push('组织串联不足 -扣分');
+  let html = '<div style="font-size:0.85em;color:#aaa;line-height:1.6;">';
   
-  // 位置适配
-  if (mismatchCount > 0) deductions.push(mismatchCount + '个球员位置不适配 -扣分');
+  // 9项平均能力
+  html += '<div style="color:#ffd700;font-weight:bold;margin-bottom:4px;">评分: ' + totalScore + '</div>';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-bottom:4px;">';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">三分:' + avgThree + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">中投:' + avgMid + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">突破:' + avgDrive + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">篮下:' + avgPost + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">篮板:' + avgReb + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">内防:' + avgInter + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">外防:' + avgPerim + '</span>';
+  html += '<span style="background:rgba(255,255,255,0.06);padding:1px 4px;border-radius:3px;">组织:' + avgPlay + '</span>';
+  html += '</div>';
   
-  // 中投
-  if (avgMid >= 85) deductions.push('中投精准 +加分');
-  
-  let html = '<div style="font-size:0.85em;color:#aaa;line-height:1.6;margin-top:4px;">';
-  html += '<div style="color:#ffd700;font-weight:bold;">阵容平均总评: ' + avgOvr + '</div>';
-  html += '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">';
-  for (const d of deductions) {
-    const isGood = d.includes('+加分') || d.includes('精准') || d.includes('凶猛') || d.includes('坚固') || d.includes('统治力') || d.includes('流畅') || d.includes('出色');
-    const isBad = d.includes('-扣分') || d.includes('不足') || d.includes('薄弱') || d.includes('偏弱') || d.includes('不佳') || d.includes('不适配');
-    const color = isGood ? '#4caf50' : (isBad ? '#f44336' : '#888');
-    html += '<span style="background:rgba(255,255,255,0.06);padding:2px 6px;border-radius:4px;color:' + color + ';">' + d + '</span>';
+  // 评分因素
+  html += '<div style="display:flex;flex-wrap:wrap;gap:3px;">';
+  for (const [text, good] of factors) {
+    if (good === true) html += '<span style="background:rgba(76,175,80,0.15);padding:1px 6px;border-radius:4px;color:#4caf50;">' + text + ' +加分</span>';
+    else if (good === null) html += '<span style="background:rgba(244,67,54,0.15);padding:1px 6px;border-radius:4px;color:#f44336;">' + text + ' -扣分</span>';
+    else html += '<span style="background:rgba(255,255,255,0.06);padding:1px 6px;border-radius:4px;color:#888;">' + text + '</span>';
   }
   html += '</div></div>';
   

@@ -59,6 +59,63 @@ class BattleManager {
 
     const isHumanHome = playerIsHome;
     this.aiOpponent = new AIOpponent(difficulty);
+    
+    // 阵容评分差值削弱
+    this._applyLineupScorePenalty();
+  }
+
+
+  // ===== 阵容评分差值削弱 =====
+  _applyLineupScorePenalty() {
+    function _calcTeamScore(players) {
+      const starters = players.filter(p => p.isStarter);
+      if (starters.length === 0) return 0;
+      let spaceSum = 0, defSum = 0, paintSum = 0;
+      for (const p of starters) {
+        const a = p.attrs;
+        const spaceVal = (a.threePointAttack || 60) * 0.7 + (a.midRangeShot || 60) * 0.3;
+        const paintVal = (a.drive || 60) * 0.5 + (a.playmaking || 60) * 0.5;
+        const defVal = (a.perimeterDefense || 60) + (a.interiorDefense || 60);
+        spaceSum += spaceVal;
+        defSum += defVal;
+        paintSum += paintVal;
+      }
+      const avgSpace = spaceSum / starters.length;
+      const avgDef = defSum / starters.length;
+      const avgPaint = paintSum / starters.length;
+      return Math.round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25);
+    }
+    
+    const scoreHome = _calcTeamScore(this.homePlayers);
+    const scoreAway = _calcTeamScore(this.awayPlayers);
+    
+    if (scoreHome < scoreAway) {
+      // 主场弱，削弱主场所有球员（首发+替补）
+      const penalty = 2;
+      for (const p of this.homePlayers) {
+        p.attrs.midRangeShot = Math.max(0, (p.attrs.midRangeShot || 60) - penalty);
+        p.attrs.drive = Math.max(0, (p.attrs.drive || 60) - penalty);
+        p.attrs.post = Math.max(0, (p.attrs.post || 60) - penalty);
+        p.attrs.threePointAttack = Math.max(0, (p.attrs.threePointAttack || 60) - penalty);
+        p.attrs.playmaking = Math.max(0, (p.attrs.playmaking || 60) - penalty);
+        p.attrs.perimeterDefense = Math.max(0, (p.attrs.perimeterDefense || 60) - penalty);
+        p.attrs.interiorDefense = Math.max(0, (p.attrs.interiorDefense || 60) - penalty);
+        p.attrs.rebounding = Math.max(0, (p.attrs.rebounding || 60) - penalty);
+      }
+    } else if (scoreAway < scoreHome) {
+      // 客场弱，削弱客场所有球员
+      const penalty = 2;
+      for (const p of this.awayPlayers) {
+        p.attrs.midRangeShot = Math.max(0, (p.attrs.midRangeShot || 60) - penalty);
+        p.attrs.drive = Math.max(0, (p.attrs.drive || 60) - penalty);
+        p.attrs.post = Math.max(0, (p.attrs.post || 60) - penalty);
+        p.attrs.threePointAttack = Math.max(0, (p.attrs.threePointAttack || 60) - penalty);
+        p.attrs.playmaking = Math.max(0, (p.attrs.playmaking || 60) - penalty);
+        p.attrs.perimeterDefense = Math.max(0, (p.attrs.perimeterDefense || 60) - penalty);
+        p.attrs.interiorDefense = Math.max(0, (p.attrs.interiorDefense || 60) - penalty);
+        p.attrs.rebounding = Math.max(0, (p.attrs.rebounding || 60) - penalty);
+      }
+    }
   }
 
   _setupCourt() {

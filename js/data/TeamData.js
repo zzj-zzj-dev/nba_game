@@ -149,8 +149,8 @@ function createMatchPlayersFromLineup(lineup) {
  */
 function calcLineupOverall(lineup) {
   const starters = ['pg','sg','sf','pf','c'];
-  let total = 0;
   let count = 0;
+  let spaceSum = 0, defSum = 0, paintSum = 0;
   
   for (const slot of starters) {
     const card = lineup[slot];
@@ -159,22 +159,27 @@ function calcLineupOverall(lineup) {
     const master = getMasterById(card.masterId);
     if (!master) continue;
     
-    const slotPos = slot.toUpperCase();
-    const isMatch = master.positions.includes(slotPos);
-    const penalty = isMatch ? 0 : (GameConfig ? GameConfig.POSITION_PENALTY : 0.10);
-    const starBonus = (card.stars || 0) * (GameConfig ? GameConfig.FUSION.ATTR_BONUS_PER_STAR : 2);
+    const a = master.attrs;
     
-    // 计算带星级加成的属性
-    const attrs = {};
-    for (const [k, v] of Object.entries(master.attrs)) {
-      attrs[k] = Math.min(99, v + starBonus);
-    }
+    // 中投三分综合值 = 三分*0.7 + 中投*0.3
+    const spaceVal = (a.threePointAttack || 60) * 0.7 + (a.midRangeShot || 60) * 0.3;
+    // 攻框综合值 = 突破*0.5 + 组织*0.5
+    const paintVal = (a.drive || 60) * 0.5 + (a.playmaking || 60) * 0.5;
+    // 防守综合值 = 外防 + 内防
+    const defVal = (a.perimeterDefense || 60) + (a.interiorDefense || 60);
     
-    const ovr = calcOverall(attrs);
-    const finalOvr = Math.round(ovr * (1 - penalty));
-    total += finalOvr;
+    spaceSum += spaceVal;
+    defSum += defVal;
+    paintSum += paintVal;
     count++;
   }
   
-  return count > 0 ? Math.round(total / count) : 0;
+  if (count === 0) return 0;
+  
+  const avgSpace = spaceSum / count;
+  const avgDef = defSum / count;
+  const avgPaint = paintSum / count;
+  
+  // 总阵容评分 = round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25)
+  return Math.round(avgSpace * 0.35 + avgDef * 0.4 + avgPaint * 0.25);
 }
