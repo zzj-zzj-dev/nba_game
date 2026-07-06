@@ -549,10 +549,8 @@ function startOnlineBattle(room, isHost) {
   
   battleManager.setCallbacks({
     onRound: (result) => {
-      // 回合结束后更新云端
+      // 回合结束后更新云端（注意：不在回调中切换球权，由调用方处理）
       syncRoundToCloud(result);
-      addLogMessage(result.message, 'round');
-      updateTurnOwnership();
     },
     onGame: (result) => handleOnlineResult(result),
     onSubstitution: (side, from, to) => {
@@ -615,9 +613,36 @@ function updateTurnDisplay() {
 }
 
 function updateActionButtonsVisibility() {
-  // 控制操作按钮的可见性（轮到你了才显示）
-  const btns = document.querySelectorAll('#action-buttons .btn, #action-buttons button');
-  // 不直接隐藏按钮，而是通过提示引导
+  // 控制操作按钮的可见性
+  const actionArea = document.getElementById('action-buttons');
+  if (!actionArea) return;
+  
+  // 查找或创建提示区域
+  let turnHint = document.getElementById('turn-hint-area');
+  if (!turnHint) {
+    turnHint = document.createElement('div');
+    turnHint.id = 'turn-hint-area';
+    turnHint.style.cssText = 'text-align:center;padding:12px;border-radius:8px;margin-bottom:8px;font-size:1em;font-weight:bold;';
+    actionArea.insertBefore(turnHint, actionArea.firstChild);
+  }
+  
+  // 查找所有操作按钮（进攻、助攻等）
+  const actionBtns = actionArea.querySelectorAll('button:not(#turn-hint-area button)');
+  
+  if (onlineGame.myTurn) {
+    turnHint.textContent = '🎯 你的回合！请选择进攻球员和方式';
+    turnHint.style.background = 'rgba(76,175,80,0.15)';
+    turnHint.style.border = '1px solid #4caf50';
+    turnHint.style.color = '#4caf50';
+    actionBtns.forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+  } else {
+    const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
+    turnHint.textContent = '⏳ 不是你的回合，等待 ' + oppName + ' 出牌...';
+    turnHint.style.background = 'rgba(255,152,0,0.1)';
+    turnHint.style.border = '1px solid #ff9800';
+    turnHint.style.color = '#ff9800';
+    actionBtns.forEach(b => { b.disabled = true; b.style.opacity = '0.4'; });
+  }
 }
 
 function listenOnlineGameState() {
@@ -666,7 +691,7 @@ function listenOnlineGameState() {
                                 (pendingSide === 'guest' && !onlineGame.isHost);
       
       // 如果是对手提交的，我们来执行
-      if (!isMyPendingAttack && !onlineGame.roundInProgress && !battleManager.gameOver) {
+      if (!isMyPendingAttack && !battleManager.gameOver) {
         onlineGame.roundInProgress = true;
         executeOpponentAttack(room.pendingAttack);
       }
@@ -681,6 +706,10 @@ function listenOnlineGameState() {
 
 function executeOpponentAttack(attackData) {
   if (!battleManager) return;
+  
+  // 重置处理状态
+  if (typeof isProcessing !== 'undefined') isProcessing = false;
+  onlineGame.roundInProgress = false;
   
   const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
   const defenseTeam = isHomeOffense ? 'away' : 'home';
@@ -737,6 +766,11 @@ function executeOpponentAttack(attackData) {
   
   // 同步我们这端的比分到云端
   syncGameState();
+  
+  // 更新界面
+  if (typeof renderBattleUI === 'function') renderBattleUI();
+  if (typeof updateScoreboard === 'function') updateScoreboard();
+  if (typeof updateGameInfo === 'function') updateGameInfo();
 }
 
 // 重写回合执行——如果是自己的回合，正常执行；否则提示等待
@@ -754,7 +788,6 @@ function executeOnlineRound(attacker, attackType, defender) {
   
   let result;
   if (attackType === 'assist') {
-    // 助攻由外部处理
     return null;
   } else {
     result = battleManager.executeRound(attacker, attackType, defender);
@@ -763,7 +796,6 @@ function executeOnlineRound(attacker, attackType, defender) {
   if (result) {
     addLogMessage(result.message, 'round');
     
-    // 将我们的操作上传到云端，让对方执行
     const attackData = {
       side: isHomeOffense ? 'host' : 'guest',
       attackerName: attacker.playerName,
@@ -780,6 +812,9 @@ function executeOnlineRound(attacker, attackType, defender) {
       }).catch(() => {});
     }
   }
+  
+  // 重置 isProcessing（防止 main.js 中的逻辑卡死）
+  if (typeof isProcessing !== 'undefined') isProcessing = false;
   
   onlineGame.roundInProgress = false;
   updateTurnOwnership();

@@ -1032,7 +1032,13 @@ function executeAttack(attackType) {
   // 联机模式使用联机回合逻辑
   if (typeof executeOnlineRound === 'function' && currentRoomId) {
     const result = executeOnlineRound(selectedAttacker, attackType, defender);
-    if (result) addLogMessage(result.message, result.type);
+    if (result) {
+      addLogMessage(result.message, result.type);
+    } else if (!onlineGame.myTurn) {
+      // 不是自己的回合，不执行后续渲染
+      isProcessing = false;
+      return;
+    }
   } else {
     const result = battleManager.executeRound(selectedAttacker, attackType, defender);
     if (result) addLogMessage(result.message, result.type);
