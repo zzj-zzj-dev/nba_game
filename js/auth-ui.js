@@ -687,6 +687,21 @@ function listenOnlineGameState() {
       onlineGame.seed = room.gameSeed;
     }
 
+    // 处理对手的进攻请求（我方选防守）
+    if (room.requestDefense && room.requestDefense.side && !battleManager.gameOver) {
+      const reqSide = room.requestDefense.side; // 'host' means host is attacking
+      // 是我方防守吗？
+      const iAmDefense = (reqSide === 'host' && !onlineGame.isHost) || (reqSide === 'guest' && onlineGame.isHost);
+      if (iAmDefense && !room.defensePick) {
+        // 弹出防守选人窗口
+        showDefensePick(room.requestDefense.attackerName, room.requestDefense.attackType);
+        // 清除请求（防止重复弹窗）
+        fdb.collection('rooms').doc(currentRoomId).update({
+          requestDefense: null
+        }).catch(() => {});
+      }
+    }
+
     // 比赛结束
     if (room.status === 'finished') {
       if (battleManager && !battleManager.gameOver) {

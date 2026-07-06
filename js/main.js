@@ -1092,17 +1092,54 @@ function showAssistSelect(passer, initialDefender) {
   const confirm = document.getElementById('modal-confirm');
   const cancel = document.getElementById('modal-cancel');
   
-  title.textContent = `🤝 ${passer.playerName} 传球给谁？`;
+  // 计算组织加成
+  const passerPlaymaking = (passer.attrs && passer.attrs.playmaking) || 50;
+  const assistBonus = passerPlaymaking > 80 ? (passerPlaymaking - 80) / 2 : 0;
+  
+  title.textContent = passer.playerName + ' 传球给谁？' + (assistBonus > 0 ? ' (+' + assistBonus.toFixed(1) + '组织加成)' : '');
   body.innerHTML = '';
   
+  // 获取每个球员的最佳进攻属性
+  function getBestAttackType(player) {
+    const attrs = player.attrs || {};
+    const attacks = [
+      { type: 'three_point', name: '三分', val: attrs.threePointAttack || 50 },
+      { type: 'mid_range', name: '中投', val: attrs.midRangeShot || 50 },
+      { type: 'drive', name: '突破', val: attrs.drive || 50 },
+      { type: 'post', name: '篮下', val: attrs.post || 50 }
+    ];
+    attacks.sort((a, b) => b.val - a.val);
+    return attacks[0];
+  }
+  
   court.forEach(p => {
+    const best = getBestAttackType(p);
+    // 计算加成后的能力值
+    const boostedVal = best.val + assistBonus;
     const card = document.createElement('div');
     card.className = 'select-card-item';
     card.style.cursor = 'pointer';
-    card.innerHTML = `<div>${p.playerName} (${p.position})</div>`;
+    card.innerHTML = '<div>' + p.playerName + ' (' + p.position + ') <span style="color:#ffd700;font-size:0.85em;">→ ' + best.name + ' ' + best.val.toFixed(0) + (assistBonus > 0 ? ' <span style="color:#4caf50;">+'+assistBonus.toFixed(1)+'</span>='+boostedVal.toFixed(0) : '') + '</span></div>';
     card.onclick = () => {
       isProcessing = false;
-      // 联机模式：助攻也需要对手选防守人
+      // 自动使用该球员最强进攻方式
+      const bestType = getBestAttackType(p).type;
+      
+      // 临时给被助攻球员加成本回合进攻属性
+      const origAttrs = {};
+      if (assistBonus > 0) {
+        // 备份原始值
+        if (p.attrs) {
+          for (const key of ['midRangeShot', 'threePointAttack', 'drive', 'post']) {
+            origAttrs[key] = p.attrs[key];
+            p.attrs[key] = (p.attrs[key] || 0) + assistBonus;
+          }
+        }
+      }
+      
+      // 传球者和接球者都扣体力（在主函数 executeAttack 中会扣进攻者的，但助攻两人都要扣）
+      if (passer.currentStamina !== undefined) passer.currentStamina = Math.max(0, (passer.currentStamina || 0) - 12);
+      
       if (typeof executeOnlineRound === 'function' && currentRoomId) {
         if (!onlineGame.myTurn) {
           addLogMessage('⏳ 不是你的回合', 'system');
@@ -1110,17 +1147,24 @@ function showAssistSelect(passer, initialDefender) {
           return;
         }
         selectedAttacker = p;
-        executeOnlineRound(passer, 'assist');
+        executeOnlineRound(p, bestType);
         modal.classList.add('hidden');
       } else {
-        const result = battleManager.executeAssistRound(passer, p, initialDefender);
+        const result = battleManager.executeRound(p, bestType, initialDefender);
         if (result) addLogMessage(result.message, result.type);
+        renderBattleUI();
+        updateScoreboard();
+        updateGameInfo();
+        resetActionState();
+        modal.classList.add('hidden');
       }
-      renderBattleUI();
-      updateScoreboard();
-      updateGameInfo();
-      resetActionState();
-      modal.classList.add('hidden');
+      
+      // 恢复属性（不影响后续回合）
+      if (assistBonus > 0 && p.attrs) {
+        for (const key of ['midRangeShot', 'threePointAttack', 'drive', 'post']) {
+          p.attrs[key] = origAttrs[key];
+        }
+      }
     };
     body.appendChild(card);
   });
