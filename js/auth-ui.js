@@ -708,13 +708,11 @@ function listenOnlineGameState() {
 
     // 处理对手的进攻请求（我方选防守）
     if (room.requestDefense && room.requestDefense.side && !battleManager.gameOver) {
-      const reqSide = room.requestDefense.side; // 'host' means host is attacking
-      // 是我方防守吗？
+      const reqSide = room.requestDefense.side;
       const iAmDefense = (reqSide === 'host' && !onlineGame.isHost) || (reqSide === 'guest' && onlineGame.isHost);
+      console.log('[Online] requestDefense received, reqSide:', reqSide, 'iAmDefense:', iAmDefense, 'hasDefensePick:', !!room.defensePick);
       if (iAmDefense && !room.defensePick) {
-        // 弹出防守选人窗口
         showDefensePick(room.requestDefense.attackerName, room.requestDefense.attackType);
-        // 清除请求（防止重复弹窗）
         fdb.collection('rooms').doc(currentRoomId).update({
           requestDefense: null
         }).catch(() => {});
@@ -751,11 +749,13 @@ function listenOnlineGameState() {
 
     // 处理防守方选的球员（对手选好了防守人）
     if (room.defensePick && room.defensePick.side) {
-      const defSide = room.defensePick.side; // 'host' or 'guest'
-      // 是我方在等防守选人
+      const defSide = room.defensePick.side;
+      console.log('[Online] defensePick received, defSide:', defSide, 'isHost:', onlineGame.isHost);
+      
+      // 我是进攻方，在等防守选人
       if (onlineGame.pendingDefensePick && 
           ((defSide === 'host' && onlineGame.isHost) || (defSide === 'guest' && !onlineGame.isHost))) {
-        // 对手选好了防守人，我执行进攻
+        console.log('[Online] I am the attacker, executing round');
         const defenderName = room.defensePick.defenderName;
         const offenseTeam = battleManager.possession === Constants.Possession.HOME ? 
           battleManager.homePlayers : battleManager.awayPlayers;
@@ -765,11 +765,9 @@ function listenOnlineGameState() {
         const defender = defTeam.find(p => p.playerName === defenderName);
 
         if (attacker && defender) {
-          // 执行进攻
           const result = battleManager.executeRound(attacker, onlineGame.pendingDefensePick.attackType, defender);
           if (result) {
             addLogMessage(result.message, 'round');
-            // 同步进攻结果到云端
             syncAttackResult(result, attacker.playerName, defenderName, onlineGame.pendingDefensePick.attackType);
           }
           const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
@@ -780,12 +778,18 @@ function listenOnlineGameState() {
         }
 
         onlineGame.pendingDefensePick = null;
-        // 清除云端防守选人
         fdb.collection('rooms').doc(currentRoomId).update({
           defensePick: null
         }).catch(() => {});
         updateTurnOwnership();
         syncGameState();
+      }
+      
+      // 我是防守方，防守选人已上传，等待进攻结果
+      if (!onlineGame.pendingDefensePick &&
+          ((defSide === 'host' && onlineGame.isHost) || (defSide === 'guest' && !onlineGame.isHost))) {
+        console.log('[Online] I am the defender, pick confirmed, waiting for attack result');
+        // 防守已选，等待 attackResult
       }
     }
 
@@ -913,14 +917,27 @@ function executeOnlineRound(attacker, attackType) {
 
   // 通知对手选防守
   if (fdb && currentRoomId) {
+    console.log('[Online] Sending requestDefense:', attacker.playerName, attackType, onlineGame.isHost ? 'host' : 'guest');
     fdb.collection('rooms').doc(currentRoomId).update({
       requestDefense: {
         attackerName: attacker.playerName,
         attackType: attackType,
         side: onlineGame.isHost ? 'host' : 'guest'
       }
-    }).catch(() => {});
+    }).catch((e) => { console.error('[Online] requestDefense failed:', e); });
   }
+
+  // 保存待处理的进攻操作（等待防守方选人后执行）
+  onlineGame.pendingDefensePick = {
+    attackerName: attacker.playerName,
+    attackType: attackType
+  };
+
+  // 进入等待状态，临时设为非自己回合，防止界面重复操作
+  onlineGame.myTurn = false;
+  onlineGame.waitingForOpponent = true;
+  updateTurnDisplay();
+  updateActionButtonsVisibility();
 
   const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
   addOnlineLog('你 → ' + attacker.playerName + ' (' + attackType + ') 等待 ' + oppName + ' 选防守', 'attack');
