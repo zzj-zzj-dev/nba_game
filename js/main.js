@@ -966,9 +966,19 @@ function handlePlayerClick(player, isHome) {
     return;
   }
   
-  // 联机模式下：自己的回合一定是在进攻，直接走进攻逻辑
+  // 联机模式下自己的回合一定是在进攻
   if (typeof onlineGame !== 'undefined' && currentRoomId) {
-    handleHomeOffense(player);
+    if (!player.isOnCourt) return;
+    if (player.currentStamina <= 0) {
+      showModal('提示', player.playerName + ' 体力耗尽，无法进攻！');
+      return;
+    }
+    selectedAttacker = player;
+    currentStep = 'select_attack_type';
+    actionTitle.textContent = '🎯 ' + player.playerName + ' - 选择进攻方式';
+    playerSelectEl.classList.add('hidden');
+    attackTypeSelectEl.classList.remove('hidden');
+    renderBattleUI();
     return;
   }
   
@@ -1048,7 +1058,17 @@ function executeAttack(attackType) {
       isProcessing = false;
       return;
     }
-    const result = executeOnlineRound(selectedAttacker, attackType, defender);
+    // 在联机模式中，防守由对手选择，我们只传进攻球员和方式
+    const result = executeOnlineRound(selectedAttacker, attackType);
+    if (result && result.waiting) {
+      // 等待对手选防守，不执行后续
+      isProcessing = false;
+      renderBattleUI();
+      updateScoreboard();
+      updateGameInfo();
+      resetActionState();
+      return;
+    }
     if (result) {
       addLogMessage(result.message, result.type);
     }
@@ -1082,14 +1102,16 @@ function showAssistSelect(passer, initialDefender) {
     card.innerHTML = `<div>${p.playerName} (${p.position})</div>`;
     card.onclick = () => {
       isProcessing = false;
-      // 联机模式使用联机助攻逻辑
-      if (typeof executeOnlineAssistRound === 'function' && currentRoomId) {
+      // 联机模式：助攻也需要对手选防守人
+      if (typeof executeOnlineRound === 'function' && currentRoomId) {
         if (!onlineGame.myTurn) {
           addLogMessage('⏳ 不是你的回合', 'system');
           modal.classList.add('hidden');
           return;
         }
-        executeOnlineAssistRound(passer, p, initialDefender);
+        selectedAttacker = p;
+        executeOnlineRound(passer, 'assist');
+        modal.classList.add('hidden');
       } else {
         const result = battleManager.executeAssistRound(passer, p, initialDefender);
         if (result) addLogMessage(result.message, result.type);
@@ -1134,7 +1156,18 @@ function resetActionState() {
     actionTitle.textContent = '🎯 你的回合 - 选择进攻球员';
     playerSelectEl.classList.remove('hidden');
     attackTypeSelectEl.classList.add('hidden');
-    renderAttackerSelectOnline();
+    // 联机模式：取当前进攻方（自己阵容）的球员
+    const isMyTeam = onlineGame.isHost;
+    const court = isMyTeam ? battleManager.getOnCourtPlayers(true) : battleManager.getOnCourtPlayers(false);
+    playerSelectEl.innerHTML = '';
+    court.forEach(p => {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-attack';
+      btn.textContent = p.playerName + ' (' + p.position + ') ' + (typeof StaminaTool !== 'undefined' ? StaminaTool.getStaminaDescription(p) : '');
+      if (p.currentStamina <= 0) btn.disabled = true;
+      btn.onclick = () => handlePlayerClick(p, isMyTeam);
+      playerSelectEl.appendChild(btn);
+    });
     return;
   }
   

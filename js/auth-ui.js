@@ -483,30 +483,47 @@ function hideModal() {
 }
 
 // ===================== 联机对战核心 =====================
-// ===================== 联机对战核心（互相对战） =====================
 
-// 联机比赛状态
+// ===================== 联机对战核心（重写：真人对战） =====================
+
+// 联机比赛状态对象
 let onlineGame = {
   roomId: null,
   isHost: false,
   hostName: '',
   guestName: '',
-  myTurn: false,       // 是否轮到己方操作
-  waitingForOpponent: false, // 是否等待对手操作
-  roundInProgress: false,    // 当前回合正在处理中
+  myTurn: false,
+  waitingForOpponent: false,
   battleOver: false,
-  unsubscribe: null
+  unsubscribe: null,
+  // 用于防守选人
+  pendingDefensePick: null,
+  // 同步随机种子
+  seed: null,
+  seedUsed: 0
 };
 
+// 同步随机数生成器
+function syncRandom() {
+  if (onlineGame.seed !== null) {
+    // 简单的伪随机，基于种子
+    onlineGame.seed = (onlineGame.seed * 9301 + 49297) % 233280;
+    onlineGame.seedUsed++;
+    return onlineGame.seed / 233280;
+  }
+  return Math.random();
+}
+
+// ===================== 主入口 =====================
 function startOnlineBattle(room, isHost) {
   hideModal();
-  
+
   document.getElementById('difficultySelect').classList.add('hidden');
   document.getElementById('battleArena').classList.remove('hidden');
   document.getElementById('action-buttons').style.display = '';
-  
+
   isInBattle = true;
-  
+
   // 保存联机状态
   onlineGame.roomId = currentRoomId;
   onlineGame.isHost = isHost;
@@ -515,11 +532,9 @@ function startOnlineBattle(room, isHost) {
   onlineGame.myTurn = false;
   onlineGame.waitingForOpponent = false;
   onlineGame.battleOver = false;
-  
+  onlineGame.pendingDefensePick = null;
+
   // 构建双方阵容
-  const homeTeamRaw = room.hostTeam || [];
-  const awayTeamRaw = room.guestTeam || [];
-  
   function buildPlayers(rawArr) {
     return rawArr.map((p, i) => createPlayer({
       id: 'p_' + i + '_' + Math.random().toString(36).substr(2,4),
@@ -531,93 +546,104 @@ function startOnlineBattle(room, isHost) {
       attrs: p.attrs
     }));
   }
-  
-  const homeTeam = buildPlayers(homeTeamRaw);
-  const awayTeam = buildPlayers(awayTeamRaw);
-  
-  // 初始化比赛（双方都认为自己是主场，但实际由云端球权决定谁进攻）
-  // 使用相同的 BattleManager，但控制权根据球权决定
+
+  const homeTeam = buildPlayers(room.hostTeam || []);
+  const awayTeam = buildPlayers(room.guestTeam || []);
+
+  // 初始化比赛（双方用同样的阵容初始化）
   battleManager = new BattleManager();
   battleManager.initializeGame(homeTeam, awayTeam, true, Difficulty.NORMAL);
-  
-  // 清除旧的AI对手——联机模式不需要AI
-  battleManager.aiOpponent = null;
-  
-  // 检查谁是当前球权方
-  // 如果是主场的回合且自己是host，或者客场回合且是guest，则自己操作
-  updateTurnOwnership();
-  
+  battleManager.aiOpponent = null; // 联机模式不需要AI
+
+  // 同步随机种子
+  if (isHost) {
+    // host生成种子，写入云端
+    onlineGame.seed = Math.floor(Math.random() * 233280);
+    if (fdb && currentRoomId) {
+      fdb.collection('rooms').doc(currentRoomId).update({
+        gameSeed: onlineGame.seed
+      }).catch(() => {});
+    }
+  } else {
+    // guest从云端读种子，如果没有则用随机
+    onlineGame.seed = room.gameSeed || Math.floor(Math.random() * 233280);
+  }
+
+  // 设置回调
   battleManager.setCallbacks({
     onRound: (result) => {
-      // 回合结束后更新云端（注意：不在回调中切换球权，由调用方处理）
       syncRoundToCloud(result);
     },
     onGame: (result) => handleOnlineResult(result),
     onSubstitution: (side, from, to) => {
-      addLogMessage(side + '换人: ' + from.playerName + '↓ ' + to.playerName + '↑', 'sub');
+      addLogMessage((side === 'home' ? '我方' : '对方') + '换人: ' + from.playerName + '↓ ' + to.playerName + '↑', 'sub');
       syncGameState();
     },
     onTimeout: (side, remaining) => {
-      addLogMessage(side + '使用暂停，剩余' + remaining + '次', 'timeout');
+      addLogMessage((side === 'home' ? '我方' : '对方') + '使用暂停，剩余' + remaining + '次', 'timeout');
       syncGameState();
     }
   });
-  
+
+  // 创建联机提示区域
+  if (!document.getElementById('online-turn-info')) {
+    const turnInfo = document.createElement('div');
+    turnInfo.id = 'online-turn-info';
+    turnInfo.style.cssText = 'text-align:center;padding:8px;background:rgba(255,215,0,0.1);border:1px solid #ffd700;border-radius:8px;margin-bottom:10px;font-size:0.9em;';
+    document.getElementById('action-buttons').insertAdjacentElement('afterbegin', turnInfo);
+  }
+
   renderBattleUI();
   bindBattleEvents();
   resetActionState();
-  
-  // 显示联机提示
-  const turnInfo = document.createElement('div');
-  turnInfo.id = 'online-turn-info';
-  turnInfo.style.cssText = 'text-align:center;padding:8px;background:rgba(255,215,0,0.1);border:1px solid #ffd700;border-radius:8px;margin-bottom:10px;font-size:0.9em;';
-  document.getElementById('action-buttons').insertAdjacentElement('afterbegin', turnInfo);
-  updateTurnDisplay();
-  
-  // 监听云端状态变化（对手的操作）
+  updateTurnOwnership();
+
+  // 监听云端状态
   listenOnlineGameState();
 }
 
+// ===================== 回合控制 =====================
 function updateTurnOwnership() {
   if (!battleManager || battleManager.gameOver) return;
-  
+
   const isHomePossession = battleManager.possession === Constants.Possession.HOME;
-  
-  // 主场球权 → host操作；客场球权 → guest操作
   onlineGame.myTurn = (isHomePossession && onlineGame.isHost) || (!isHomePossession && !onlineGame.isHost);
   onlineGame.waitingForOpponent = !onlineGame.myTurn;
-  
+
   updateTurnDisplay();
   updateActionButtonsVisibility();
+
+  // 如果自己的回合，resetActionState 会自动显示进攻选项
+  if (typeof resetActionState === 'function') resetActionState();
 }
 
 function updateTurnDisplay() {
   const turnInfo = document.getElementById('online-turn-info');
   if (!turnInfo) return;
-  
+
   if (battleManager && battleManager.gameOver) {
     turnInfo.innerHTML = '🏁 比赛结束';
     return;
   }
-  
+
   if (onlineGame.myTurn) {
     turnInfo.innerHTML = '🎯 你的回合！选择进攻球员和方式';
     turnInfo.style.background = 'rgba(76,175,80,0.15)';
     turnInfo.style.borderColor = '#4caf50';
-  } else if (onlineGame.waitingForOpponent) {
+    turnInfo.style.color = '#4caf50';
+  } else {
     const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
-    turnInfo.innerHTML = `⏳ 等待 ${oppName} 操作...`;
+    turnInfo.innerHTML = '⏳ 不是你的回合，等待 ' + oppName + ' 出牌...';
     turnInfo.style.background = 'rgba(255,152,0,0.1)';
     turnInfo.style.borderColor = '#ff9800';
+    turnInfo.style.color = '#ff9800';
   }
 }
 
 function updateActionButtonsVisibility() {
-  // 控制操作按钮的可见性
   const actionArea = document.getElementById('action-buttons');
   if (!actionArea) return;
-  
-  // 查找或创建提示区域
+
   let turnHint = document.getElementById('turn-hint-area');
   if (!turnHint) {
     turnHint = document.createElement('div');
@@ -625,10 +651,9 @@ function updateActionButtonsVisibility() {
     turnHint.style.cssText = 'text-align:center;padding:12px;border-radius:8px;margin-bottom:8px;font-size:1em;font-weight:bold;';
     actionArea.insertBefore(turnHint, actionArea.firstChild);
   }
-  
-  // 查找所有操作按钮（进攻、助攻等）
-  const actionBtns = actionArea.querySelectorAll('button:not(#turn-hint-area button)');
-  
+
+  const actionBtns = actionArea.querySelectorAll('button:not(#turn-hint-area button):not(#online-turn-info)');
+
   if (onlineGame.myTurn) {
     turnHint.textContent = '🎯 你的回合！请选择进攻球员和方式';
     turnHint.style.background = 'rgba(76,175,80,0.15)';
@@ -645,23 +670,27 @@ function updateActionButtonsVisibility() {
   }
 }
 
+// ===================== 监听云端状态 =====================
 function listenOnlineGameState() {
   if (!fdb || !currentRoomId) return;
-  
-  // 先取消之前的监听
+
   if (onlineGame.unsubscribe) {
     onlineGame.unsubscribe();
   }
-  
+
   onlineGame.unsubscribe = fdb.collection('rooms').doc(currentRoomId).onSnapshot((snap) => {
     if (!snap.exists) return;
     const room = snap.data();
-    
+
+    // 读取同步种子
+    if (room.gameSeed && onlineGame.seed === null) {
+      onlineGame.seed = room.gameSeed;
+    }
+
     // 比赛结束
     if (room.status === 'finished') {
       if (battleManager && !battleManager.gameOver) {
         battleManager.gameOver = true;
-        // 从云端的 winner 信息判断
         const winnerName = room.winner || '';
         const myName = onlineGame.isHost ? onlineGame.hostName : onlineGame.guestName;
         if (winnerName === myName) {
@@ -675,200 +704,209 @@ function listenOnlineGameState() {
           addLogMessage('💔 你输了！', 'game_end');
         }
         isInBattle = false;
+        onlineGame.battleOver = true;
         setTimeout(() => {
           exitBattle();
           if (onlineGame.unsubscribe) { onlineGame.unsubscribe(); onlineGame.unsubscribe = null; }
+          if (roomUnsubscribe) { roomUnsubscribe(); roomUnsubscribe = null; }
           currentRoomId = null;
         }, 3000);
       }
       return;
     }
-    
-    // 检查对手是否提交了进攻操作
-    if (room.pendingAttack && room.pendingAttack.side) {
-      const pendingSide = room.pendingAttack.side; // 'host' or 'guest'
-      const isMyPendingAttack = (pendingSide === 'host' && onlineGame.isHost) || 
-                                (pendingSide === 'guest' && !onlineGame.isHost);
-      
-      // 如果是对手提交的，我们来执行
-      if (!isMyPendingAttack && !battleManager.gameOver) {
-        onlineGame.roundInProgress = true;
-        executeOpponentAttack(room.pendingAttack);
+
+    // 处理防守方选的球员（对手选好了防守人）
+    if (room.defensePick && room.defensePick.side) {
+      const defSide = room.defensePick.side; // 'host' or 'guest'
+      // 是我方在等防守选人
+      if (onlineGame.pendingDefensePick && 
+          ((defSide === 'host' && onlineGame.isHost) || (defSide === 'guest' && !onlineGame.isHost))) {
+        // 对手选好了防守人，我执行进攻
+        const defenderName = room.defensePick.defenderName;
+        const offenseTeam = battleManager.possession === Constants.Possession.HOME ? 
+          battleManager.homePlayers : battleManager.awayPlayers;
+        const attacker = offenseTeam.find(p => p.playerName === onlineGame.pendingDefensePick.attackerName);
+        const defTeam = battleManager.possession === Constants.Possession.HOME ? 
+          battleManager.awayPlayers : battleManager.homePlayers;
+        const defender = defTeam.find(p => p.playerName === defenderName);
+
+        if (attacker && defender) {
+          // 执行进攻
+          const result = battleManager.executeRound(attacker, onlineGame.pendingDefensePick.attackType, defender);
+          if (result) {
+            addLogMessage(result.message, 'round');
+            // 同步进攻结果到云端
+            syncAttackResult(result, attacker.playerName, defenderName, onlineGame.pendingDefensePick.attackType);
+          }
+          renderBattleUI();
+          updateScoreboard();
+          updateGameInfo();
+        }
+
+        onlineGame.pendingDefensePick = null;
+        // 清除云端防守选人
+        fdb.collection('rooms').doc(currentRoomId).update({
+          defensePick: null
+        }).catch(() => {});
+        updateTurnOwnership();
+        syncGameState();
       }
     }
-    
-    // 更新比分显示（如果有同步的比分）
-    if (room.syncScore) {
-      // 可选：同步对方比分确认
+
+    // 处理对手提交的进攻结果（我作为防守方）
+    if (room.attackResult && room.attackResult.side) {
+      const atkSide = room.attackResult.side;
+      const isMyDefense = ((atkSide === 'host' && !onlineGame.isHost) || (atkSide === 'guest' && onlineGame.isHost));
+      
+      if (isMyDefense && !battleManager.gameOver) {
+        // 执行对手的进攻结果在我的battleManager上
+        const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
+        const offenseTeam = isHomeOffense ? battleManager.homePlayers : battleManager.awayPlayers;
+        const defenseTeam = isHomeOffense ? battleManager.awayPlayers : battleManager.homePlayers;
+        const attacker = offenseTeam.find(p => p.playerName === room.attackResult.attackerName);
+        const defender = defenseTeam.find(p => p.playerName === room.attackResult.defenderName);
+
+        if (attacker && defender) {
+          const result = battleManager.executeRound(attacker, room.attackResult.attackType, defender);
+          if (result) {
+            addLogMessage('[对方] ' + result.message, 'round');
+          }
+          renderBattleUI();
+          updateScoreboard();
+          updateGameInfo();
+        }
+
+        // 清除云端进攻结果
+        fdb.collection('rooms').doc(currentRoomId).update({
+          attackResult: null
+        }).catch(() => {});
+        updateTurnOwnership();
+        syncGameState();
+      }
+    }
+
+    // 同步比分（兜底）
+    if (room.syncScore && battleManager) {
+      // 只做显示同步，不做数值覆写（防止篡改）
     }
   });
 }
 
-function executeOpponentAttack(attackData) {
-  if (!battleManager) return;
+// ===================== 防守选人阶段 =====================
+// 当对手发起进攻后，我方需要选一个防守球员
+function showDefensePick(attackerName, attackType) {
+  onlineGame.pendingDefensePick = {
+    attackerName: attackerName,
+    attackType: attackType
+  };
+
+  const modal = document.getElementById('modal-overlay');
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  const confirm = document.getElementById('modal-confirm');
+  const cancel = document.getElementById('modal-cancel');
+
+  title.textContent = '🛡️ 选择防守球员';
   
-  // 重置处理状态
-  if (typeof isProcessing !== 'undefined') isProcessing = false;
-  onlineGame.roundInProgress = false;
-  
-  const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
-  const defenseTeam = isHomeOffense ? 'away' : 'home';
-  
-  // 从进攻数据中重建操作
-  const attackerName = attackData.attackerName;
-  const attackType = attackData.attackType;
-  const defenderName = attackData.defenderName;
-  const passerName = attackData.passerName;
-  const receiverName = attackData.receiverName;
-  
-  // 在防守方（我们）的球队中找到对应的防守球员
-  const defTeamPlayers = defenseTeam === 'home' ? battleManager.homePlayers : battleManager.awayPlayers;
-  const defender = defTeamPlayers.find(p => p.playerName === defenderName);
-  
-  let result;
-  if (attackType === 'assist' && passerName && receiverName) {
-    // 助攻回合
-    const allPlayers = [...battleManager.homePlayers, ...battleManager.awayPlayers];
-    const passer = allPlayers.find(p => p.playerName === passerName);
-    const receiver = allPlayers.find(p => p.playerName === receiverName);
-    if (passer && receiver) {
-      result = battleManager.executeAssistRound(passer, receiver, defender);
-    } else {
-      // fallback: 用 AI 选择
-      const offenseTeam = isHomeOffense ? battleManager.homePlayers : battleManager.awayPlayers;
-      const attacker = offenseTeam.find(p => p.playerName === attackerName);
-      if (attacker) {
-        result = battleManager.executeRound(attacker, attackType, defender);
-      }
+  const defTeam = battleManager.possession === Constants.Possession.HOME ? 
+    battleManager.awayPlayers : battleManager.homePlayers;
+  const courtPlayers = defTeam.filter(p => p.isOnCourt);
+
+  body.innerHTML = '<p style="color:#aaa;margin-bottom:10px;">对手: ' + attackerName + ' (' + attackType + ')</p>';
+  courtPlayers.forEach(p => {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.cssText = 'display:block;width:100%;margin:4px 0;padding:8px;';
+    btn.textContent = p.playerName + ' (' + p.position + ') ' + 
+      (p.currentStamina <= 0 ? ' [体力耗尽]' : '');
+    if (p.currentStamina <= 0) {
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
     }
-  } else {
-    // 普通进攻回合
-    const offenseTeam = isHomeOffense ? battleManager.homePlayers : battleManager.awayPlayers;
-    const attacker = offenseTeam.find(p => p.playerName === attackerName);
-    if (attacker) {
-      result = battleManager.executeRound(attacker, attackType, defender);
+    btn.onclick = async () => {
+      // 上传防守选择到云端
+      const side = onlineGame.isHost ? 'host' : 'guest';
+      await fdb.collection('rooms').doc(currentRoomId).update({
+        defensePick: {
+          side: side,
+          defenderName: p.playerName
+        }
+      }).catch(() => {});
+      modal.classList.add('hidden');
+      addLogMessage('🛡️ 你选择 ' + p.playerName + ' 防守 ' + attackerName, 'system');
+      
+      // 等待 host 执行完进攻后的结果
+      // listenOnlineGameState 会处理 attackResult
+    };
+    body.appendChild(btn);
+  });
+
+  confirm.style.display = 'none';
+  cancel.textContent = '自动选择';
+  cancel.style.display = 'inline-block';
+  cancel.onclick = () => {
+    // 自动选防守
+    const defender = battleManager._autoSelectDefender(
+      (battleManager.possession === Constants.Possession.HOME ? battleManager.homePlayers : battleManager.awayPlayers)
+        .find(p => p.playerName === attackerName)
+    );
+    if (defender) {
+      const side = onlineGame.isHost ? 'host' : 'guest';
+      fdb.collection('rooms').doc(currentRoomId).update({
+        defensePick: {
+          side: side,
+          defenderName: defender.playerName
+        }
+      }).catch(() => {});
+      addLogMessage('🛡️ 自动选择 ' + defender.playerName + ' 防守', 'system');
     }
-  }
-  
-  if (result) {
-    addLogMessage('[对方] ' + result.message, 'round');
-  }
-  
-  // 清除对方的待处理攻击
-  if (currentRoomId && fdb) {
+    modal.classList.add('hidden');
+  };
+  modal.classList.remove('hidden');
+}
+
+// ===================== 执行进攻（联机版） =====================
+function executeOnlineRound(attacker, attackType) {
+  if (!battleManager || battleManager.gameOver) return null;
+  if (!onlineGame.myTurn) return null;
+
+  // 通知对手选防守
+  if (fdb && currentRoomId) {
     fdb.collection('rooms').doc(currentRoomId).update({
-      pendingAttack: null
+      requestDefense: {
+        attackerName: attacker.playerName,
+        attackType: attackType,
+        side: onlineGame.isHost ? 'host' : 'guest'
+      }
     }).catch(() => {});
   }
-  
-  onlineGame.roundInProgress = false;
-  updateTurnOwnership();
-  
-  // 同步我们这端的比分到云端
-  syncGameState();
-  
-  // 更新界面
-  if (typeof renderBattleUI === 'function') renderBattleUI();
-  if (typeof updateScoreboard === 'function') updateScoreboard();
-  if (typeof updateGameInfo === 'function') updateGameInfo();
+
+  addLogMessage('等待对手选择防守球员...', 'system');
+  return { waiting: true };
 }
 
-// 重写回合执行——如果是自己的回合，正常执行；否则提示等待
-function executeOnlineRound(attacker, attackType, defender) {
-  if (!battleManager || battleManager.gameOver) return null;
-  if (!onlineGame.myTurn) {
-    addLogMessage('⏳ 不是你的回合，请等待对手操作', 'system');
-    return null;
-  }
-  if (onlineGame.roundInProgress) return null;
-  
-  onlineGame.roundInProgress = true;
-  
-  const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
-  
-  let result;
-  if (attackType === 'assist') {
-    return null;
-  } else {
-    result = battleManager.executeRound(attacker, attackType, defender);
-  }
-  
-  if (result) {
-    addLogMessage(result.message, 'round');
-    
-    const attackData = {
-      side: isHomeOffense ? 'host' : 'guest',
-      attackerName: attacker.playerName,
+// 同步进攻结果
+function syncAttackResult(result, attackerName, defenderName, attackType) {
+  if (!fdb || !currentRoomId) return;
+
+  const side = onlineGame.isHost ? 'host' : 'guest';
+  fdb.collection('rooms').doc(currentRoomId).update({
+    attackResult: {
+      side: side,
+      attackerName: attackerName,
+      defenderName: defenderName,
       attackType: attackType,
-      defenderName: defender ? defender.playerName : null,
+      resultType: result ? result.type : null,
       homeScore: battleManager.homeScore,
       awayScore: battleManager.awayScore,
       timestamp: Date.now()
-    };
-    
-    if (currentRoomId && fdb) {
-      fdb.collection('rooms').doc(currentRoomId).update({
-        pendingAttack: attackData
-      }).catch(() => {});
     }
-  }
-  
-  // 重置 isProcessing（防止 main.js 中的逻辑卡死）
-  if (typeof isProcessing !== 'undefined') isProcessing = false;
-  
-  onlineGame.roundInProgress = false;
-  updateTurnOwnership();
-  syncGameState();
-  
-  return result;
+  }).catch(() => {});
 }
 
-// 重写助攻回合
-function executeOnlineAssistRound(passer, receiver, defender) {
-  if (!battleManager || battleManager.gameOver) return null;
-  if (!onlineGame.myTurn) {
-    addLogMessage('⏳ 不是你的回合，请等待对手操作', 'system');
-    return null;
-  }
-  if (onlineGame.roundInProgress) return null;
-  
-  onlineGame.roundInProgress = true;
-  
-  const result = battleManager.executeAssistRound(passer, receiver, defender);
-  
-  if (result) {
-    addLogMessage(result.message, 'round');
-    
-    const isHomeOffense = battleManager.possession === Constants.Possession.HOME;
-    const attackData = {
-      side: isHomeOffense ? 'host' : 'guest',
-      attackerName: receiver.playerName,
-      attackType: 'assist',
-      defenderName: defender ? defender.playerName : null,
-      passerName: passer.playerName,
-      receiverName: receiver.playerName,
-      homeScore: battleManager.homeScore,
-      awayScore: battleManager.awayScore,
-      timestamp: Date.now()
-    };
-    
-    if (currentRoomId && fdb) {
-      fdb.collection('rooms').doc(currentRoomId).update({
-        pendingAttack: attackData
-      }).catch(() => {});
-    }
-  }
-  
-  onlineGame.roundInProgress = false;
-  updateTurnOwnership();
-  syncGameState();
-  
-  return result;
-}
-
+// ===================== 云同步 =====================
 function syncGameState() {
   if (!currentRoomId || !fdb || !battleManager) return;
-  
   fdb.collection('rooms').doc(currentRoomId).update({
     syncScore: {
       homeScore: battleManager.homeScore,
@@ -881,11 +919,9 @@ function syncGameState() {
 
 function syncRoundToCloud(result) {
   if (!currentRoomId || !fdb || !battleManager) return;
-  
-  const side = onlineGame.isHost ? 'host' : 'guest';
   fdb.collection('rooms').doc(currentRoomId).update({
     lastRound: {
-      side: side,
+      side: onlineGame.isHost ? 'host' : 'guest',
       result: result,
       homeScore: battleManager.homeScore,
       awayScore: battleManager.awayScore,
@@ -894,13 +930,14 @@ function syncRoundToCloud(result) {
   }).catch(() => {});
 }
 
+// ===================== 比赛结算 =====================
 function handleOnlineResult(result) {
   if (!battleManager || onlineGame.battleOver) return;
   onlineGame.battleOver = true;
-  
+
   const isHomeWinner = battleManager.homeScore >= Constants.WIN_SCORE;
   const reward = 100;
-  
+
   // 通知云端比赛结束
   if (currentRoomId && fdb) {
     const winnerName = isHomeWinner ? onlineGame.hostName : onlineGame.guestName;
@@ -913,23 +950,20 @@ function handleOnlineResult(result) {
       }
     }).catch(() => {});
   }
-  
-  // 判断自己是否赢家
+
   const iAmWinner = (isHomeWinner && onlineGame.isHost) || (!isHomeWinner && !onlineGame.isHost);
-  
   if (iAmWinner) {
     coins += reward;
     saveToStorage();
     updateUI();
     addLogMessage('🏆 你赢了！+100金币！', 'reward');
-    showModal('🎉 胜利！', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n获得 100 金币！`);
+    showModal('🎉 胜利！', '比分 ' + battleManager.homeScore + ':' + battleManager.awayScore + '\n获得 100 金币！');
   } else {
     addLogMessage('💔 你输了！', 'game_end');
-    showModal('💔 失败', `比分 ${battleManager.homeScore}:${battleManager.awayScore}\n下次加油！`);
+    showModal('💔 失败', '比分 ' + battleManager.homeScore + ':' + battleManager.awayScore + '\n下次加油！');
   }
-  
+
   isInBattle = false;
-  onlineGame.battleOver = true;
   setTimeout(() => {
     exitBattle();
     if (onlineGame.unsubscribe) { onlineGame.unsubscribe(); onlineGame.unsubscribe = null; }
@@ -937,17 +971,3 @@ function handleOnlineResult(result) {
     currentRoomId = null;
   }, 3000);
 }
-
-// 覆盖原来的回合执行函数（在 main.js 中定义的 will be replaced by these）
-function onOnlineSubstitutionCallback(side, from, to) {
-  addLogMessage(side + '换人: ' + from.playerName + '↓ ' + to.playerName + '↑', 'sub');
-  syncGameState();
-}
-
-function onOnlineTimeoutCallback(side, remaining) {
-  addLogMessage(side + '使用暂停，剩余' + remaining + '次', 'timeout');
-  syncGameState();
-}
-
-// ===================== 导出给main.js使用 =====================
-// saveGame 和 loadGame 通过全局函数调用
