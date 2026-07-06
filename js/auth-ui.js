@@ -585,6 +585,12 @@ function startOnlineBattle(room, isHost) {
     }
   });
 
+  // 显示联机日志框
+  const onlineLogContainer = document.getElementById('online-log-container');
+  if (onlineLogContainer) onlineLogContainer.style.display = 'block';
+  const onlineLogEl = document.getElementById('online-log-messages');
+  if (onlineLogEl) onlineLogEl.innerHTML = '';
+  
   // 创建联机提示区域
   if (!document.getElementById('online-turn-info')) {
     const turnInfo = document.createElement('div');
@@ -671,6 +677,19 @@ function updateActionButtonsVisibility() {
 }
 
 // ===================== 监听云端状态 =====================
+
+// ===================== 联机操作记录 =====================
+function addOnlineLog(message, type) {
+  const el = document.getElementById('online-log-messages');
+  if (!el) return;
+  const entry = document.createElement('div');
+  entry.style.cssText = 'padding:2px 4px;font-size:0.83em;border-bottom:1px solid rgba(255,255,255,0.05);color:' + 
+    (type === 'attack' ? '#4caf50' : type === 'defense' ? '#ff9800' : '#aaa') + ';';
+  entry.textContent = message;
+  el.appendChild(entry);
+  el.scrollTop = el.scrollHeight;
+}
+
 function listenOnlineGameState() {
   if (!fdb || !currentRoomId) return;
 
@@ -753,6 +772,8 @@ function listenOnlineGameState() {
             // 同步进攻结果到云端
             syncAttackResult(result, attacker.playerName, defenderName, onlineGame.pendingDefensePick.attackType);
           }
+          const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
+          addOnlineLog(oppName + ' 选 ' + defenderName + ' 防守你的 ' + onlineGame.pendingDefensePick.attackerName + ' (' + onlineGame.pendingDefensePick.attackType + ')', 'defense');
           renderBattleUI();
           updateScoreboard();
           updateGameInfo();
@@ -786,6 +807,9 @@ function listenOnlineGameState() {
           if (result) {
             addLogMessage('[对方] ' + result.message, 'round');
           }
+          // 记录对手操作
+          const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
+          addOnlineLog(oppName + ' → ' + attacker.playerName + ' (' + room.attackResult.attackType + ') 你选 ' + defender.playerName, 'attack');
           renderBattleUI();
           updateScoreboard();
           updateGameInfo();
@@ -848,7 +872,8 @@ function showDefensePick(attackerName, attackType) {
         }
       }).catch(() => {});
       modal.classList.add('hidden');
-      addLogMessage('🛡️ 你选择 ' + p.playerName + ' 防守 ' + attackerName, 'system');
+      addOnlineLog('🛡️ 你选择 ' + p.playerName + ' 防守 ' + attackerName + ' (' + attackType + ')', 'defense');
+  addLogMessage('🛡️ 你选择 ' + p.playerName + ' 防守 ' + attackerName, 'system');
       
       // 等待 host 执行完进攻后的结果
       // listenOnlineGameState 会处理 attackResult
@@ -873,6 +898,7 @@ function showDefensePick(attackerName, attackType) {
           defenderName: defender.playerName
         }
       }).catch(() => {});
+      addOnlineLog('🛡️ 自动选择 ' + defender.playerName + ' 防守 ' + attackerName + ' (' + attackType + ')', 'defense');
       addLogMessage('🛡️ 自动选择 ' + defender.playerName + ' 防守', 'system');
     }
     modal.classList.add('hidden');
@@ -896,6 +922,8 @@ function executeOnlineRound(attacker, attackType) {
     }).catch(() => {});
   }
 
+  const oppName = onlineGame.isHost ? onlineGame.guestName : onlineGame.hostName;
+  addOnlineLog('你 → ' + attacker.playerName + ' (' + attackType + ') 等待 ' + oppName + ' 选防守', 'attack');
   addLogMessage('等待对手选择防守球员...', 'system');
   return { waiting: true };
 }
