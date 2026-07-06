@@ -23,56 +23,69 @@ const firebaseConfig = {
   appId: "1:614710872766:web:a86d11643c5679f8c0ecef"
 };
 
-// 安全地初始化Firebase（防止重复）
 let firebaseInitialized = false;
-try {
-  if (!firebase.apps.length) {
-    firebase.initializeApp(firebaseConfig);
-  }
-  firebaseInitialized = true;
-} catch(e) {
-  console.warn('Firebase初始化失败:', e);
-}
-
-const auth = firebaseInitialized ? firebase.auth() : null;
-const fdb = firebaseInitialized ? firebase.firestore() : null;
-
+let auth = null;
+let fdb = null;
 let currentUser = null;
+
+// 延迟初始化Firebase（在 initAuthUI 中调用）
+function ensureFirebase() {
+  if (firebaseInitialized) return true;
+  if (typeof firebase === 'undefined' || !firebase.apps) return false;
+  try {
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    auth = firebase.auth();
+    fdb = firebase.firestore();
+    firebaseInitialized = true;
+    return true;
+  } catch(e) {
+    console.warn('Firebase初始化失败:', e);
+    return false;
+  }
+}
 let currentRoomId = null;
 let roomUnsubscribe = null;
 let isHostPlayer = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
+  console.log('[Auth] initAuthUI called');
   const btn = document.getElementById('btnAuth');
   if (btn) btn.onclick = handleAuth;
   
-  if (!auth) {
+  if (!ensureFirebase()) {
+    console.warn('[Auth] Firebase not available');
     document.getElementById('loginStatus').textContent = '离线模式';
     document.getElementById('btnAuth').textContent = '登录';
     document.getElementById('btnAuth').onclick = () => alert('Firebase未初始化，请在online模式下使用');
     return;
   }
   
-  // 立即检查当前登录状态
+  console.log('[Auth] Firebase initialized, currentUser:', auth.currentUser ? auth.currentUser.email : 'null');
+  
   function checkUser() {
+    if (!auth) return false;
     if (auth.currentUser) {
+      console.log('[Auth] checkUser found user:', auth.currentUser.email);
       currentUser = auth.currentUser;
       showUserInfo(auth.currentUser);
       return true;
     }
+    console.log('[Auth] checkUser: no currentUser');
     return false;
   }
   
   if (!checkUser()) {
     showLoginPrompt();
-    // Firebase Auth 状态可能尚未同步，延迟重试
     setTimeout(checkUser, 500);
     setTimeout(checkUser, 1500);
+    setTimeout(checkUser, 3000);
   }
   
-  // 同时注册监听，处理登出/登录状态的实时变化
   auth.onAuthStateChanged((user) => {
+    console.log('[Auth] onAuthStateChanged fired, user:', user ? user.email : 'null');
     currentUser = user;
     if (user) {
       showUserInfo(user);
