@@ -44,7 +44,6 @@ let isHostPlayer = false;
 
 // ===================== 初始化 =====================
 function initAuthUI() {
-  // 先绑定默认行为（防止异步回调未触发时按钮无反应）
   const btn = document.getElementById('btnAuth');
   if (btn) btn.onclick = handleAuth;
   
@@ -54,6 +53,25 @@ function initAuthUI() {
     document.getElementById('btnAuth').onclick = () => alert('Firebase未初始化，请在online模式下使用');
     return;
   }
+  
+  // 立即检查当前登录状态
+  function checkUser() {
+    if (auth.currentUser) {
+      currentUser = auth.currentUser;
+      showUserInfo(auth.currentUser);
+      return true;
+    }
+    return false;
+  }
+  
+  if (!checkUser()) {
+    showLoginPrompt();
+    // Firebase Auth 状态可能尚未同步，延迟重试
+    setTimeout(checkUser, 500);
+    setTimeout(checkUser, 1500);
+  }
+  
+  // 同时注册监听，处理登出/登录状态的实时变化
   auth.onAuthStateChanged((user) => {
     currentUser = user;
     if (user) {
