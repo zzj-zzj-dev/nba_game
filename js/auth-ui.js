@@ -1,3 +1,14 @@
+// 兜底登录函数（由HTML onclick直接调用）
+function handleAuthClick() {
+  if (typeof handleAuth === 'function') {
+    handleAuth();
+    return false;
+  }
+  // auth-ui.js 未加载时直接跳转
+  window.location.href = 'login.html';
+  return false;
+}
+
 /**
  * auth-ui.js — Firebase 登录 + 存档 + 联机（适配新UI）
  * 新UI顶部有 #user-area (登录状态 + 按钮)

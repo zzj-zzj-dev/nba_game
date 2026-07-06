@@ -17,7 +17,7 @@
     <div id="coin-display">💰 <span id="coinCount">0</span></div>
     <div id="user-area">
       <span id="loginStatus">未登录</span>
-      <button id="btnAuth" class="btn btn-small">登录</button>
+      <button id="btnAuth" class="btn btn-small" onclick="return handleAuthClick()">登录</button>
       <button id="btn-save" class="btn btn-small" style="margin-left:4px;" onclick="if(typeof saveGame==='function')saveGame()" title="保存到云端">💾</button>
       <button id="btn-load" class="btn btn-small" style="margin-left:2px;" onclick="if(typeof loadGame==='function')loadGame()" title="从云端加载">📂</button>
     </div>
