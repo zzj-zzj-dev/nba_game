@@ -89,9 +89,9 @@ var StaminaTool = {
   getStaminaDescription(player) {
     const ratio = player.currentStamina / Constants.STAMINA_MAX;
     if (player.currentStamina <= 0) return '\u{1F480}体力耗尽';
-    if (player.currentStamina <= 30) return `\u{1F630}力竭(\${Math.round(ratio * 100)}%)`;
-    if (player.currentStamina <= 60) return `\u{1F613}疲劳(\${Math.round(ratio * 100)}%)`;
-    if (player.currentStamina <= 80) return `\u{1F44D}良好(\${Math.round(ratio * 100)}%)`;
-    return `\u{1F4AA}充沛(\${Math.round(ratio * 100)}%)`;
+    if (player.currentStamina <= 30) return `\u{1F630}力竭(${Math.round(ratio * 100)}%)`;
+    if (player.currentStamina <= 60) return `\u{1F613}疲劳(${Math.round(ratio * 100)}%)`;
+    if (player.currentStamina <= 80) return `\u{1F44D}良好(${Math.round(ratio * 100)}%)`;
+    return `\u{1F4AA}充沛(${Math.round(ratio * 100)}%)`;
   }
 };

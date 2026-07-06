@@ -878,9 +878,6 @@ function createPlayerCard(player, isHome, isBench) {
   const subBonus = player.isJustSubstituted && player.isOnCourt 
     ? '<div class="sub-bonus-indicator">⚡替补奇兵</div>' : '';
   
-  const synergy = player._synergyBonus > 0 
-    ? `<div style="font-size:0.65em;color:#ff9800;">🌟+${player._synergyBonus}</div>` : '';
-  
   card.innerHTML = `
     <div class="player-name">${player.playerName}</div>
     <div class="player-pos">${player.position}</div>
@@ -899,7 +896,7 @@ function createPlayerCard(player, isHome, isBench) {
       <span class="attr-mini" title="篮板">板${player.attrs.rebounding || '?'}</span>
       <span class="attr-mini" title="体力">体${player.attrs.stamina || '?'}</span>
     </div>
-    ${badges}${subBonus}${synergy}
+    ${badges}${subBonus}
   `;
   
   card.onclick = () => handlePlayerClick(player, isHome);
