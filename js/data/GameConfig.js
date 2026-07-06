@@ -2,7 +2,7 @@
  * GameConfig.js — 全局游戏配置常量
  * 所有数值集中管理，方便后期修改
  */
-const GameConfig = {
+var GameConfig = {
   // ===== 金币系统 =====
   COINS: {
     STARTING_COINS: 500,        // 开局初始金币
@@ -73,7 +73,7 @@ const GameConfig = {
 };
 
 // 联赛难度定义
-const DIFFICULTY = {
+var DIFFICULTY = {
   EASY: 'easy',
   NORMAL: 'normal',
   HARD: 'hard'
